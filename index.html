@@ -79,8 +79,8 @@
             position: fixed; bottom: 0; left: 0; right: 0;
             background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px); padding: 10px;
-            border-top: 1px solid var(--border); display: grid;
-            grid-template-columns: 1fr 1fr; gap: 8px; z-index: 1000;
+            border-top: 1px solid var(--border); display: flex;
+            flex-direction: column; gap: 8px; z-index: 1000;
             padding-bottom: max(20px, env(safe-area-inset-bottom));
         }
 
@@ -93,10 +93,9 @@
         button:active { opacity: 0.8; transform: scale(0.98); }
 
         #btn-camera { background-color: var(--primary); }
-        #btn-sync-sc { background-color: var(--sc-color); }
-        #btn-sync-scanner { background-color: var(--scanner-color); }
-        #btn-sync-transfer { background-color: var(--transfer-color); }
-        #btn-export { background-color: var(--success); grid-column: span 2; padding: 14px; margin-top: 5px;}
+        #btn-incoming-inventory { background-color: var(--success); }
+        #btn-stock-count { background-color: var(--danger); }
+        #btn-export { background-color: var(--transfer-color); padding: 14px; margin-top: 5px;}
         .stop-mode { background-color: var(--danger) !important; }
 
         #bt-trap { position: absolute; opacity: 0; top: -1000px; left: -1000px; }
@@ -125,10 +124,10 @@
     </div>
 
     <footer>
-        <button id="btn-camera" onclick="toggleCamera()">📷 Cam Scan</button>
-        <button id="btn-incoming-inventory" onclick="syncToGoogleSheet('Incoming Inventory')">Incoming Inventory เพิ่มสินค้าในสต๊อก</button>
-        <button id="btn-stock-count" onclick="syncToGoogleSheet('Stock Count')">Outgoing Inventory ลบสินค้าในสต๊อก</button>
-        <button id="btn-export" onclick="exportCSV()">📥 Export CSV (Backup)</button>
+        <button id="btn-camera" onclick="toggleCamera()">📷 Camera Scan</button>
+        <button id="btn-incoming-inventory" onclick="syncToGoogleSheet('Incoming Inventory')">➕ Add Stock</button>
+        <button id="btn-stock-count" onclick="syncToGoogleSheet('Stock Count')">➖ Remove Stock</button>
+        <button id="btn-export" onclick="exportCSV()">📥 Export CSV</button>
     </footer>
 
     <input type="text" id="bt-trap" autofocus inputmode="none">
