@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Stock Counter Pro</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+    <style>
+        :root {
+            --primary: #007AFF; 
+            --success: #34C759; 
+            --danger: #FF3B30; 
+            --sc-color: #8e44ad; /* Purple for SC */
+            --scanner-color: #2c3e50; /* Dark Blue for Scanner */
+            --transfer-color: #f39c12; /* Orange for Transfer */
+            --bg: #f2f2f7;
+            --card: #ffffff;
+            --border: #c6c6c8;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0; padding: 0; background-color: var(--bg);
+            height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+        }
+
+        header {
+            background: var(--card); padding: 15px;
+            padding-top: max(15px, env(safe-area-inset-top));
+            text-align: center; border-bottom: 1px solid var(--border);
+            flex-shrink: 0; z-index: 100;
+        }
+        h1 { margin: 0; font-size: 1.2rem; }
+        #status { font-size: 0.8rem; color: #666; margin-top: 5px; }
+
+        #summary-bar {
+            background: #e5e5ea; padding: 10px 15px; font-size: 0.9rem;
+            display: flex; justify-content: space-between; color: #555;
+            font-weight: 600; border-bottom: 1px solid #d1d1d6; flex-shrink: 0;
+        }
+
+        #reader { width: 100%; background: black; display: none; flex-shrink: 0; min-height: 250px; }
+
+        #list-container {
+            flex-grow: 1; overflow-y: auto; padding: 10px;
+            -webkit-overflow-scrolling: touch; padding-bottom: 220px; 
+        }
+
+        .empty-state { text-align: center; color: #888; margin-top: 50px; padding: 20px; }
+
+        .item-card {
+            background: var(--card); border-radius: 12px; padding: 16px;
+            margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            display: flex; justify-content: space-between; align-items: center;
+            animation: flash 0.5s;
+        }
+        @keyframes flash {
+            0% { background-color: #e3f9e5; }
+            100% { background-color: var(--card); }
+        }
+
+        .item-info { flex-grow: 1; padding-right: 15px; }
+        .item-name { font-weight: 600; font-size: 1.05rem; color: #000; margin-bottom: 4px; }
+        .item-detail { font-size: 0.85rem; color: #666; }
+        .item-sku { font-size: 0.75rem; color: #999; font-family: monospace; margin-top: 4px; }
+        
+        .item-count {
+            background: var(--primary); color: white; font-weight: bold;
+            font-size: 1.3rem; min-width: 44px; height: 44px; border-radius: 22px;
+            display: flex; align-items: center; justify-content: center;
+        }
+
+        footer {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px); padding: 10px;
+            border-top: 1px solid var(--border); display: grid;
+            grid-template-columns: 1fr 1fr; gap: 8px; z-index: 1000;
+            padding-bottom: max(20px, env(safe-area-inset-bottom));
+        }
+
+        button {
+            border: none; padding: 12px 5px; border-radius: 10px;
+            font-size: 0.8rem; font-weight: 700; cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s; -webkit-tap-highlight-color: transparent;
+            color: white; text-align: center;
+        }
+        button:active { opacity: 0.8; transform: scale(0.98); }
+
+        #btn-camera { background-color: var(--primary); }
+        #btn-sync-sc { background-color: var(--sc-color); }
+        #btn-sync-scanner { background-color: var(--scanner-color); }
+        #btn-sync-transfer { background-color: var(--transfer-color); }
+        #btn-export { background-color: var(--success); grid-column: span 2; padding: 14px; margin-top: 5px;}
+        .stop-mode { background-color: var(--danger) !important; }
+
+        #bt-trap { position: absolute; opacity: 0; top: -1000px; left: -1000px; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Stock Counter</h1>
+        <div id="status">Loading database...</div>
+    </header>
+    
+    <div id="summary-bar">
+        <span>Unique: <span id="unique-count">0</span></span>
+        <span>Total Qty: <span id="total-count">0</span></span>
+    </div>
+
+    <div id="reader"></div>
+
+    <div id="list-container">
+        <div class="empty-state" id="empty-msg">
+            <p style="font-size: 1.2rem; font-weight: 500; margin-bottom: 10px;">Ready to Scan</p>
+            <p style="color: #666;">Use Camera or Bluetooth</p>
+        </div>
+        <div id="scanned-list"></div>
+    </div>
+
+    <footer>
+        <button id="btn-camera" onclick="toggleCamera()">📷 Cam Scan</button>
+        <button id="btn-sync-sc" onclick="syncToGoogleSheet('SC')">📤 Sync SC</button>
+        <button id="btn-sync-scanner" onclick="syncToGoogleSheet('Scanner')">📤 Sync Scanner</button>
+        <button id="btn-sync-transfer" onclick="syncToGoogleSheet('-')">📤 Sync Transfer</button>
+        <button id="btn-export" onclick="exportCSV()">📥 Export CSV (Backup)</button>
+    </footer>
+
+    <input type="text" id="bt-trap" autofocus inputmode="none">
+
+    <script>
+        // --- CONFIGURATION ---
+        const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=0&single=true&output=csv';
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwflxt9AoEebPUlKEXTY0WlouILSd4Zx9oQorMyytdIHrsgOghD94dK16iLzzRxNiNX/exec'; 
+
+        // --- STATE ---
+        let productDB = {}; 
+        let scannedItems = {}; 
+        let html5QrcodeScanner = null;
+        let isCameraRunning = false;
+        let bluetoothBuffer = "";
+        let bluetoothTimeout = null;
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playBeep() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        window.onload = function() {
+            fetchData();
+            document.addEventListener('keydown', handleBluetoothInput);
+            document.addEventListener('click', (e) => {
+                if(e.target.tagName !== 'BUTTON') document.getElementById('bt-trap').focus();
+            });
+        };
+
+        function fetchData() {
+            Papa.parse(SHEET_CSV_URL, {
+                download: true, header: true, skipEmptyLines: true,
+                complete: (results) => {
+                    results.data.forEach(row => {
+                        const barcode = String(row['Product Variant ID']).trim();
+                        if (barcode) {
+                            productDB[barcode] = {
+                                name: row['Name'] || 'Unknown',
+                                sku: row['SKU'] || 'N/A',
+                                detail1: row['Detail1'] || '',
+                                detail2: row['Detail2'] || ''
+                            };
+                        }
+                    });
+                    document.getElementById('status').innerText = `Ready. ${Object.keys(productDB).length} items loaded.`;
+                }
+            });
+        }
+
+        function handleScan(barcode) {
+            barcode = barcode.trim();
+            const product = productDB[barcode];
+            if (product) {
+                playBeep();
+                const sku = product.sku;
+                if (scannedItems[sku]) {
+                    scannedItems[sku].count++;
+                    scannedItems[sku].timestamp = Date.now();
+                } else {
+                    scannedItems[sku] = { count: 1, data: product, timestamp: Date.now() };
+                }
+                updateUI();
+            } else {
+                alert("Not Found: " + barcode);
+            }
+        }
+
+        function updateUI() {
+            const list = document.getElementById('scanned-list');
+            const itemsArr = Object.values(scannedItems);
+            document.getElementById('unique-count').innerText = itemsArr.length;
+            document.getElementById('total-count').innerText = itemsArr.reduce((s, i) => s + i.count, 0);
+            document.getElementById('empty-msg').style.display = itemsArr.length > 0 ? 'none' : 'block';
+            
+            itemsArr.sort((a, b) => b.timestamp - a.timestamp);
+            list.innerHTML = itemsArr.map(item => `
+                <div class="item-card">
+                    <div class="item-info">
+                        <div class="item-name">${item.data.name}</div>
+                        <div class="item-detail">${item.data.detail1} ${item.data.detail2}</div>
+                        <div class="item-sku">SKU: ${item.data.sku}</div>
+                    </div>
+                    <div class="item-count">${item.count}</div>
+                </div>
+            `).join('');
+        }
+
+        async function syncToGoogleSheet(target) {
+            const itemsArr = Object.values(scannedItems);
+            if (itemsArr.length === 0) return alert("Nothing to sync!");
+            
+            let btnId;
+            if (target === 'SC') btnId = 'btn-sync-sc';
+            else if (target === 'Scanner') btnId = 'btn-sync-scanner';
+            else if (target === '-') btnId = 'btn-sync-transfer';
+
+            const btn = document.getElementById(btnId);
+            const originalText = btn.innerText;
+
+            if (!confirm(`Sync ${itemsArr.length} items to tab "${target}"?`)) return;
+
+            btn.innerText = "⌛...";
+            btn.disabled = true;
+
+            const payload = {
+                target: target,
+                items: itemsArr.map(item => ({ sku: item.data.sku, count: item.count }))
+            };
+
+            try {
+                await fetch(APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    cache: 'no-cache',
+                    body: JSON.stringify(payload)
+                });
+                alert(`✅ Success! Data sent to ${target}.`);
+                if(confirm("Clear local list?")) { scannedItems = {}; updateUI(); }
+            } catch (e) {
+                alert("❌ Sync Error.");
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        function handleBluetoothInput(e) {
+            if (e.target.id !== 'bt-trap' && e.target.tagName === 'INPUT') return;
+            if (e.key === 'Enter') {
+                if (bluetoothBuffer.length > 0) { handleScan(bluetoothBuffer); bluetoothBuffer = ""; }
+            } else if (e.key.length === 1) {
+                bluetoothBuffer += e.key;
+            }
+            clearTimeout(bluetoothTimeout);
+            bluetoothTimeout = setTimeout(() => { bluetoothBuffer = ""; }, 200);
+        }
+
+        function toggleCamera() {
+            const btn = document.getElementById('btn-camera');
+            if (isCameraRunning) {
+                html5QrcodeScanner.stop().then(() => {
+                    document.getElementById('reader').style.display = 'none';
+                    btn.innerText = "📷 Cam Scan"; btn.classList.remove('stop-mode');
+                    isCameraRunning = false;
+                });
+            } else {
+                document.getElementById('reader').style.display = 'block';
+                btn.innerText = "Stop Cam"; btn.classList.add('stop-mode');
+                html5QrcodeScanner = new Html5Qrcode("reader");
+                html5QrcodeScanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, 
+                (text) => {
+                    handleScan(text);
+                    html5QrcodeScanner.pause();
+                    setTimeout(() => { if(isCameraRunning) html5QrcodeScanner.resume(); }, 1500);
+                }).then(() => isCameraRunning = true);
+            }
+        }
+
+        function exportCSV() {
+            const items = Object.values(scannedItems);
+            if (items.length === 0) return alert("No items!");
+            let csv = "SKU,Name,Count\n" + items.map(i => `${i.data.sku},"${i.data.name}",${i.count}`).join("\n");
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `inventory_backup.csv`;
+            a.click();
+        }
+    </script>
+</body>
+</html>
