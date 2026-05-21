@@ -230,10 +230,11 @@
             
             let btnId;
             if (target === 'SC') btnId = 'btn-sync-sc';
-            else if (target === 'Scanner') btnId = 'btn-sync-scanner';
-            else if (target === '-') btnId = 'btn-sync-transfer';
+            else if (target === 'Incoming Inventory') btnId = 'btn-incoming-inventory';
+            else if (target === 'Stock Count') btnId = 'btn-stock-count';
 
             const btn = document.getElementById(btnId);
+            if (!btn) return alert(`Button not found for target: ${target}`);
             const originalText = btn.innerText;
 
             if (!confirm(`Sync ${itemsArr.length} items to tab "${target}"?`)) return;
