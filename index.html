@@ -95,8 +95,59 @@
         #btn-camera { background-color: var(--primary); }
         #btn-incoming-inventory { background-color: var(--success); }
         #btn-stock-count { background-color: var(--danger); }
+        #btn-manual-stock { background-color: #17c0eb; }
         #btn-export { background-color: var(--transfer-color); padding: 14px; margin-top: 5px;}
         .stop-mode { background-color: var(--danger) !important; }
+
+        /* Modal Styles */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.5); z-index: 2000; align-items: center; justify-content: center;
+        }
+        .modal-overlay.active { display: flex; }
+        
+        .modal {
+            background: white; border-radius: 20px; padding: 20px; max-width: 95vw; width: 100%;
+            max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .modal-header { font-size: 1.2rem; font-weight: 600; margin-bottom: 15px; }
+        .modal-close { position: absolute; top: 15px; right: 15px; background: none; border: none; 
+            font-size: 1.5rem; cursor: pointer; color: #666; }
+
+        .modal-content { flex-grow: 1; overflow-y: auto; padding: 0 5px; }
+
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 0.9rem; font-weight: 600; margin-bottom: 5px; color: #333; }
+        .form-group select, .form-group input { 
+            width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; 
+            font-size: 1rem; font-family: inherit;
+        }
+
+        .product-preview { 
+            background: #f5f5f5; padding: 15px; border-radius: 10px; margin: 15px 0;
+            text-align: center;
+        }
+        .product-preview img { max-width: 100%; max-height: 250px; border-radius: 8px; }
+        .product-preview-name { font-weight: 600; margin-top: 10px; font-size: 0.95rem; }
+
+        .quantity-control {
+            display: flex; align-items: center; justify-content: center; gap: 15px; margin: 20px 0;
+            background: #f9f9f9; padding: 15px; border-radius: 10px;
+        }
+        .qty-btn { background: var(--primary); color: white; width: 50px; height: 50px; 
+            border-radius: 50%; display: flex; align-items: center; justify-content: center; 
+            font-size: 1.5rem; border: none; cursor: pointer; }
+        .qty-btn:active { opacity: 0.8; }
+        .qty-display { font-size: 1.8rem; font-weight: 700; min-width: 60px; text-align: center; }
+
+        .modal-footer { 
+            display: flex; gap: 10px; padding-top: 15px; border-top: 1px solid #e0e0e0; margin-top: 15px;
+        }
+        .modal-footer button { flex: 1; padding: 12px; font-size: 0.9rem; }
+        #modal-submit { background: var(--success); }
+        #modal-cancel { background: #999; }
 
         #bt-trap { position: absolute; opacity: 0; top: -1000px; left: -1000px; }
     </style>
@@ -127,8 +178,41 @@
         <button id="btn-camera" onclick="toggleCamera()">📷 Camera Scan</button>
         <button id="btn-incoming-inventory" onclick="syncToGoogleSheet('Incoming Inventory')">➕ Add Stock</button>
         <button id="btn-stock-count" onclick="syncToGoogleSheet('Stock Count')">📦 Stock Count</button>
+        <button id="btn-manual-stock" onclick="openManualStockModal()">✏️ Manual Add</button>
         <button id="btn-export" onclick="exportCSV()">📥 Export CSV</button>
     </footer>
+
+    <div id="manual-stock-modal" class="modal-overlay">
+        <div class="modal">
+            <button class="modal-close" onclick="closeManualStockModal()">✕</button>
+            <div class="modal-header">Manual Add</div>
+            
+            <div class="modal-content">
+                <div class="form-group">
+                    <label for="sku-select">Select SKU:</label>
+                    <select id="sku-select" onchange="onSkuSelected()">
+                        <option value="">-- Choose SKU --</option>
+                    </select>
+                </div>
+
+                <div id="product-preview-container" class="product-preview" style="display: none;">
+                    <img id="product-image" alt="Product" />
+                    <div class="product-preview-name" id="product-name"></div>
+                </div>
+
+                <div class="quantity-control">
+                    <button class="qty-btn" onclick="decreaseQty()">−</button>
+                    <div class="qty-display" id="qty-display">0</div>
+                    <button class="qty-btn" onclick="increaseQty()">+</button>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button id="modal-cancel" onclick="closeManualStockModal()">Cancel</button>
+                <button id="modal-submit" onclick="submitManualCount()">Confirm & Add</button>
+            </div>
+        </div>
+    </div>
 
     <input type="text" id="bt-trap" autofocus inputmode="none">
 
@@ -136,6 +220,8 @@
         // --- CONFIGURATION ---
         const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=0&single=true&output=csv';
         const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwflxt9AoEebPUlKEXTY0WlouILSd4Zx9oQorMyytdIHrsgOghD94dK16iLzzRxNiNX/exec'; 
+        const ITEMS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=2025939465&single=true&output=csv'; // Items sheet
+        const IMG_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=3408913377&single=true&output=csv'; // Img sheet
 
         // --- STATE ---
         let productDB = {}; 
@@ -144,6 +230,10 @@
         let isCameraRunning = false;
         let bluetoothBuffer = "";
         let bluetoothTimeout = null;
+        let itemsData = [];
+        let imgData = [];
+        let manualQuantity = 0;
+        let selectedSku = "";
 
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         
@@ -159,6 +249,8 @@
 
         window.onload = function() {
             fetchData();
+            fetchItemsData();
+            fetchImgData();
             document.addEventListener('keydown', handleBluetoothInput);
             document.addEventListener('click', (e) => {
                 if(e.target.tagName !== 'BUTTON') document.getElementById('bt-trap').focus();
@@ -183,6 +275,145 @@
                     document.getElementById('status').innerText = `Ready. ${Object.keys(productDB).length} items loaded.`;
                 }
             });
+        }
+
+        function fetchItemsData() {
+            Papa.parse(ITEMS_SHEET_URL, {
+                download: true, header: true, skipEmptyLines: true,
+                complete: (results) => {
+                    itemsData = results.data;
+                    populateSkuDropdown();
+                }
+            });
+        }
+
+        function fetchImgData() {
+            Papa.parse(IMG_SHEET_URL, {
+                download: true, header: true, skipEmptyLines: true,
+                complete: (results) => {
+                    imgData = results.data;
+                }
+            });
+        }
+
+        function populateSkuDropdown() {
+            const select = document.getElementById('sku-select');
+            // Clear existing options except first
+            while (select.children.length > 1) select.removeChild(select.lastChild);
+            
+            // Reverse the items so newest (bottom) items appear first
+            const reversedItems = [...itemsData].reverse();
+            
+            reversedItems.forEach(item => {
+                const sku = item.K || item['SKU']; // Column K
+                if (sku && sku.trim()) {
+                    const option = document.createElement('option');
+                    option.value = sku.trim();
+                    option.textContent = sku.trim();
+                    select.appendChild(option);
+                }
+            });
+        }
+
+        function onSkuSelected() {
+            const sku = document.getElementById('sku-select').value;
+            selectedSku = sku;
+            manualQuantity = 0;
+            document.getElementById('qty-display').innerText = '0';
+
+            if (!sku) {
+                document.getElementById('product-preview-container').style.display = 'none';
+                return;
+            }
+
+            // Find the item in itemsData by SKU (column K)
+            const item = itemsData.find(row => (row.K || row['SKU'] || '').trim() === sku.trim());
+            if (!item) {
+                document.getElementById('product-preview-container').style.display = 'none';
+                return;
+            }
+
+            // Get product name from column C
+            const productName = item.C || item['Name'] || 'Unknown Product';
+            
+            // Find matching image from Img sheet by comparing Name (column C from Items with column A from Img)
+            const imgMatch = imgData.find(row => {
+                const imgName = row.A || row['Product Name'] || '';
+                const itemName = item.C || item['Name'] || '';
+                return imgName.trim().toLowerCase() === itemName.trim().toLowerCase();
+            });
+
+            const imageUrl = imgMatch ? (imgMatch.B || imgMatch['DirectImageURL'] || '') : '';
+
+            document.getElementById('product-name').innerText = productName;
+            const imgElement = document.getElementById('product-image');
+            if (imageUrl) {
+                imgElement.src = imageUrl;
+                imgElement.onerror = () => { imgElement.style.display = 'none'; };
+                imgElement.style.display = 'block';
+            } else {
+                imgElement.style.display = 'none';
+            }
+
+            document.getElementById('product-preview-container').style.display = 'block';
+        }
+
+        function increaseQty() {
+            manualQuantity++;
+            document.getElementById('qty-display').innerText = manualQuantity;
+        }
+
+        function decreaseQty() {
+            if (manualQuantity > 0) {
+                manualQuantity--;
+                document.getElementById('qty-display').innerText = manualQuantity;
+            }
+        }
+
+        function openManualStockModal() {
+            manualQuantity = 0;
+            selectedSku = "";
+            document.getElementById('sku-select').value = '';
+            document.getElementById('qty-display').innerText = '0';
+            document.getElementById('product-preview-container').style.display = 'none';
+            document.getElementById('manual-stock-modal').classList.add('active');
+        }
+
+        function closeManualStockModal() {
+            document.getElementById('manual-stock-modal').classList.remove('active');
+        }
+
+        function submitManualCount() {
+            if (!selectedSku) {
+                alert("Please select a SKU");
+                return;
+            }
+            if (manualQuantity <= 0) {
+                alert("Please enter a quantity greater than 0");
+                return;
+            }
+
+            // Add to scannedItems (mimicking scan behavior)
+            if (scannedItems[selectedSku]) {
+                scannedItems[selectedSku].count += manualQuantity;
+                scannedItems[selectedSku].timestamp = Date.now();
+            } else {
+                scannedItems[selectedSku] = {
+                    count: manualQuantity,
+                    data: {
+                        name: document.getElementById('product-name').innerText,
+                        sku: selectedSku,
+                        detail1: '',
+                        detail2: ''
+                    },
+                    timestamp: Date.now(),
+                    isManual: true
+                };
+            }
+
+            updateUI();
+            closeManualStockModal();
+            playBeep();
         }
 
         function handleScan(barcode) {
