@@ -58,7 +58,11 @@
             margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
             display: flex; justify-content: space-between; align-items: center;
             animation: flash 0.5s;
+            border-left: 5px solid transparent;
         }
+        .item-card.incoming { border-left-color: var(--primary); }
+        .item-card.outgoing { border-left-color: var(--danger); }
+
         @keyframes flash {
             0% { background-color: #e3f9e5; }
             100% { background-color: var(--card); }
@@ -70,10 +74,12 @@
         .item-sku { font-size: 0.75rem; color: #999; font-family: monospace; margin-top: 4px; }
         
         .item-count {
-            background: var(--primary); color: white; font-weight: bold;
-            font-size: 1.3rem; min-width: 44px; height: 44px; border-radius: 22px;
-            display: flex; align-items: center; justify-content: center;
+            color: white; font-weight: bold;
+            font-size: 1.2rem; min-width: 50px; height: 36px; border-radius: 18px;
+            display: flex; align-items: center; justify-content: center; padding: 0 8px;
         }
+        .item-count.incoming { background: var(--primary); }
+        .item-count.outgoing { background: var(--danger); }
 
         footer {
             position: fixed; bottom: 0; left: 0; right: 0;
@@ -136,8 +142,11 @@
         .qty-btn { background: var(--primary); color: white; width: 50px; height: 50px; 
             border-radius: 50%; display: flex; align-items: center; justify-content: center; 
             font-size: 1.5rem; border: none; cursor: pointer; }
+        .qty-btn.minus-btn { background: var(--danger); }
         .qty-btn:active { opacity: 0.8; }
-        .qty-display { font-size: 1.8rem; font-weight: 700; min-width: 60px; text-align: center; }
+        .qty-display { font-size: 1.8rem; font-weight: 700; min-width: 80px; text-align: center; }
+        .qty-display.positive { color: var(--primary); }
+        .qty-display.negative { color: var(--danger); }
 
         .modal-footer { 
             display: flex; gap: 10px; padding-top: 15px; border-top: 1px solid #e0e0e0; margin-top: 15px;
@@ -176,337 +185,4 @@
         <button id="btn-incoming-inventory" onclick="syncToGoogleSheet('Incoming inventory')">➕ Add Stock</button>
         <button id="btn-stock-count" onclick="syncToGoogleSheet('Stock Count')">📦 Stock Count</button>
         <button id="btn-manual-stock" onclick="openManualStockModal()">✏️ Manual Add</button>
-        <button id="btn-export" onclick="exportCSV()">📥 Export CSV</button>
-    </footer>
-
-    <div id="manual-stock-modal" class="modal-overlay">
-        <div class="modal">
-            <button class="modal-close" onclick="closeManualStockModal()">✕</button>
-            <div class="modal-header">Manual Add</div>
-            
-            <div class="modal-content">
-                <div class="form-group">
-                    <label for="sku-select">Select SKU:</label>
-                    <select id="sku-select" onchange="onSkuSelected()">
-                        <option value="">-- Choose SKU --</option>
-                    </select>
-                </div>
-
-                <div id="product-name-display" class="product-text-preview" style="display: none;"></div>
-
-                <div class="quantity-control">
-                    <button class="qty-btn" onclick="decreaseQty()">−</button>
-                    <div class="qty-display" id="qty-display">0</div>
-                    <button class="qty-btn" onclick="increaseQty()">+</button>
-                </div>
-            </div>
-
-            <div class="modal-footer">
-                <button id="modal-cancel" onclick="closeManualStockModal()">Cancel</button>
-                <button id="modal-submit" onclick="submitManualCount()">Confirm & Add</button>
-            </div>
-        </div>
-    </div>
-
-    <input type="text" id="bt-trap" autofocus inputmode="none">
-
-    <script>
-        const BASE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub';
-        const ITEMS_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=0&single=true&output=csv`;       
-        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwflxt9AoEebPUlKEXTY0WlouILSd4Zx9oQorMyytdIHrsgOghD94dK16iLzzRxNiNX/exec'; 
-
-        let productDB = {}; 
-        let scannedItems = {}; 
-        let html5QrcodeScanner = null;
-        let isCameraRunning = false;
-        let bluetoothBuffer = "";
-        let bluetoothTimeout = null;
-        let itemsData = [];
-        let manualQuantity = 0;
-        let selectedSku = "";
-
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        
-        function playBeep() {
-            if (audioCtx.state === 'suspended') audioCtx.resume();
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.connect(gain); gain.connect(audioCtx.destination);
-            osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
-            osc.start(); osc.stop(audioCtx.currentTime + 0.1);
-        }
-
-        window.onload = function() {
-            fetchInventoryAndItems();
-            document.addEventListener('keydown', handleBluetoothInput);
-            
-            document.addEventListener('click', (e) => {
-                if (document.getElementById('manual-stock-modal').classList.contains('active')) {
-                    return; 
-                }
-                const formElements = ['BUTTON', 'SELECT', 'OPTION', 'INPUT', 'TEXTAREA'];
-                if (formElements.includes(e.target.tagName)) {
-                    return;
-                }
-                document.getElementById('bt-trap').focus();
-            });
-        };
-
-        function getValNormalized(obj, targetKey) {
-            if (!obj) return '';
-            const foundKey = Object.keys(obj).find(k => k.trim().toLowerCase() === targetKey.trim().toLowerCase());
-            return foundKey ? String(obj[foundKey]).trim() : '';
-        }
-
-        function fetchInventoryAndItems() {
-            Papa.parse(ITEMS_SHEET_URL, {
-                download: true, header: true, skipEmptyLines: true,
-                complete: (results) => {
-                    itemsData = results.data;
-                    
-                    results.data.forEach(row => {
-                        const barcode = getValNormalized(row, 'Product Variant | Variant 1');
-                        if (barcode) {
-                            productDB[barcode] = {
-                                name: getValNormalized(row, 'Name') || 'Unknown',
-                                sku: getValNormalized(row, 'SKU') || 'N/A',
-                                detail1: getValNormalized(row, 'Detail1'),
-                                detail2: getValNormalized(row, 'Detail2')
-                            };
-                        }
-                    });
-                    
-                    document.getElementById('status').innerText = `Ready. ${Object.keys(productDB).length} variations loaded.`;
-                    populateSkuDropdown();
-                },
-                error: () => {
-                    document.getElementById('status').innerText = "❌ Error loading Items sheet.";
-                }
-            });
-        }
-
-        function populateSkuDropdown() {
-            const select = document.getElementById('sku-select');
-            while (select.children.length > 1) select.removeChild(select.lastChild);
-            
-            const reversedItems = [...itemsData].reverse();
-            const uniqueSkus = new Set();
-            
-            reversedItems.forEach(item => {
-                const sku = getValNormalized(item, 'SKU');
-                if (sku && !uniqueSkus.has(sku)) {
-                    uniqueSkus.add(sku);
-                    const option = document.createElement('option');
-                    option.value = sku;
-                    option.textContent = sku;
-                    select.appendChild(option);
-                }
-            });
-        }
-
-        function onSkuSelected() {
-            const sku = document.getElementById('sku-select').value;
-            selectedSku = sku;
-            manualQuantity = 0;
-            document.getElementById('qty-display').innerText = '0';
-
-            if (!sku) {
-                document.getElementById('product-name-display').style.display = 'none';
-                return;
-            }
-
-            const item = itemsData.find(row => getValNormalized(row, 'SKU') === sku);
-            if (!item) {
-                document.getElementById('product-name-display').style.display = 'none';
-                return;
-            }
-
-            const productName = getValNormalized(item, 'Name') || 'Unknown Product';
-            const textPreview = document.getElementById('product-name-display');
-            textPreview.innerText = productName;
-            textPreview.style.display = 'block';
-        }
-
-        function increaseQty() {
-            manualQuantity++;
-            document.getElementById('qty-display').innerText = manualQuantity;
-        }
-
-        function decreaseQty() {
-            if (manualQuantity > 0) {
-                manualQuantity--;
-                document.getElementById('qty-display').innerText = manualQuantity;
-            }
-        }
-
-        function openManualStockModal() {
-            manualQuantity = 0;
-            selectedSku = "";
-            document.getElementById('sku-select').value = '';
-            document.getElementById('qty-display').innerText = '0';
-            document.getElementById('product-name-display').style.display = 'none';
-            document.getElementById('manual-stock-modal').classList.add('active');
-        }
-
-        function closeManualStockModal() {
-            document.getElementById('manual-stock-modal').classList.remove('active');
-            setTimeout(() => {
-                document.getElementById('bt-trap').focus();
-            }, 150);
-        }
-
-        function submitManualCount() {
-            if (!selectedSku) {
-                alert("Please select a SKU");
-                return;
-            }
-            if (manualQuantity <= 0) {
-                alert("Please enter a quantity greater than 0");
-                return;
-            }
-
-            if (scannedItems[selectedSku]) {
-                scannedItems[selectedSku].count += manualQuantity;
-                scannedItems[selectedSku].timestamp = Date.now();
-            } else {
-                scannedItems[selectedSku] = {
-                    count: manualQuantity,
-                    data: {
-                        name: document.getElementById('product-name-display').innerText,
-                        sku: selectedSku,
-                        detail1: '',
-                        detail2: ''
-                    },
-                    timestamp: Date.now(),
-                    isManual: true
-                };
-            }
-
-            updateUI();
-            closeManualStockModal();
-            playBeep();
-        }
-
-        function handleScan(barcode) {
-            barcode = barcode.trim();
-            const product = productDB[barcode];
-            if (product) {
-                playBeep();
-                const sku = product.sku;
-                if (scannedItems[sku]) {
-                    scannedItems[sku].count++;
-                    scannedItems[sku].timestamp = Date.now();
-                } else {
-                    scannedItems[sku] = { count: 1, data: product, timestamp: Date.now() };
-                }
-                updateUI();
-            } else {
-                alert("Not Found: " + barcode);
-            }
-        }
-
-        function updateUI() {
-            const list = document.getElementById('scanned-list');
-            const itemsArr = Object.values(scannedItems);
-            document.getElementById('unique-count').innerText = itemsArr.length;
-            document.getElementById('total-count').innerText = itemsArr.reduce((s, i) => s + i.count, 0);
-            document.getElementById('empty-msg').style.display = itemsArr.length > 0 ? 'none' : 'block';
-            
-            itemsArr.sort((a, b) => b.timestamp - a.timestamp);
-            list.innerHTML = itemsArr.map(item => `
-                <div class="item-card">
-                    <div class="item-info">
-                        <div class="item-name">${item.data.name}</div>
-                        <div class="item-detail">${item.data.detail1 || ''} ${item.data.detail2 || ''}</div>
-                        <div class="item-sku">SKU: ${item.data.sku}</div>
-                    </div>
-                    <div class="item-count">${item.count}</div>
-                </div>
-            `).join('');
-        }
-
-        async function syncToGoogleSheet(target) {
-            const itemsArr = Object.values(scannedItems);
-            if (itemsArr.length === 0) return alert("Nothing to sync!");
-            
-            let btnId;
-            if (target === 'Incoming inventory') btnId = 'btn-incoming-inventory';
-            else if (target === 'Stock Count') btnId = 'btn-stock-count';
-
-            const btn = document.getElementById(btnId);
-            if (!btn) return alert(`Button not found for target: ${target}`);
-            const originalText = btn.innerText;
-
-            if (!confirm(`Sync ${itemsArr.length} items to tab "${target}"?`)) return;
-
-            btn.innerText = "⌛...";
-            btn.disabled = true;
-
-            const payload = {
-                target: target,
-                items: itemsArr.map(item => ({ sku: item.data.sku, count: item.count }))
-            };
-
-            try {
-                await fetch(APPS_SCRIPT_URL, {
-                    method: 'POST',
-                    mode: 'no-cors',
-                    cache: 'no-cache',
-                    body: JSON.stringify(payload)
-                });
-                alert(`✅ Success! Data sent to ${target}.`);
-                if(confirm("Clear local list?")) { scannedItems = {}; updateUI(); }
-            } catch (e) {
-                alert("❌ Sync Error.");
-            } finally {
-                btn.innerText = originalText;
-                btn.disabled = false;
-            }
-        }
-
-        function handleBluetoothInput(e) {
-            if (e.target.id !== 'bt-trap' && e.target.tagName === 'INPUT') return;
-            if (e.key === 'Enter') {
-                if (bluetoothBuffer.length > 0) { handleScan(bluetoothBuffer); bluetoothBuffer = ""; }
-            } else if (e.key.length === 1) {
-                bluetoothBuffer += e.key;
-            }
-            clearTimeout(bluetoothTimeout);
-            bluetoothTimeout = setTimeout(() => { bluetoothBuffer = ""; }, 200);
-        }
-
-        function toggleCamera() {
-            const btn = document.getElementById('btn-camera');
-            if (isCameraRunning) {
-                html5QrcodeScanner.stop().then(() => {
-                    document.getElementById('reader').style.display = 'none';
-                    btn.innerText = "📷 Cam Scan"; btn.classList.remove('stop-mode');
-                    isCameraRunning = false;
-                });
-            } else {
-                document.getElementById('reader').style.display = 'block';
-                btn.innerText = "Stop Cam"; btn.classList.add('stop-mode');
-                html5QrcodeScanner = new Html5Qrcode("reader");
-                html5QrcodeScanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, 
-                (text) => {
-                    handleScan(text);
-                    html5QrcodeScanner.pause();
-                    setTimeout(() => { if(isCameraRunning) html5QrcodeScanner.resume(); }, 1500);
-                }).then(() => isCameraRunning = true);
-            }
-        }
-
-        function exportCSV() {
-            const items = Object.values(scannedItems);
-            if (items.length === 0) return alert("No items!");
-            let csv = "SKU,Name,Count\n" + items.map(i => `${i.data.sku},"${i.data.name}",${i.count}`).join("\n");
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = `inventory_backup.csv`;
-            a.click();
-        }
-    </script>
-</body>
-</html>
+        <button id="btn-export" onclick="exportCSV()">
