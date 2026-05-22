@@ -124,12 +124,10 @@
             font-size: 1rem; font-family: inherit;
         }
 
-        .product-preview { 
-            background: #f5f5f5; padding: 15px; border-radius: 10px; margin: 15px 0;
-            text-align: center;
+        .product-text-preview { 
+            background: #f5f5f5; padding: 12px; border-radius: 10px; margin: 15px 0;
+            text-align: center; font-weight: 600; font-size: 1rem; color: #222;
         }
-        .product-preview img { max-width: 100%; max-height: 250px; border-radius: 8px; display: block; margin: 0 auto; }
-        .product-preview-name { font-weight: 600; margin-top: 10px; font-size: 0.95rem; }
 
         .quantity-control {
             display: flex; align-items: center; justify-content: center; gap: 15px; margin: 20px 0;
@@ -194,10 +192,7 @@
                     </select>
                 </div>
 
-                <div id="product-preview-container" class="product-preview" style="display: none;">
-                    <img id="product-image" alt="Product" />
-                    <div class="product-preview-name" id="product-name"></div>
-                </div>
+                <div id="product-name-display" class="product-text-preview" style="display: none;"></div>
 
                 <div class="quantity-control">
                     <button class="qty-btn" onclick="decreaseQty()">−</button>
@@ -217,9 +212,7 @@
 
     <script>
         const BASE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub';
-        
         const ITEMS_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=0&single=true&output=csv`;       
-        const IMG_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=2425994465&single=true&output=csv`; 
         const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwflxt9AoEebPUlKEXTY0WlouILSd4Zx9oQorMyytdIHrsgOghD94dK16iLzzRxNiNX/exec'; 
 
         let productDB = {}; 
@@ -229,7 +222,6 @@
         let bluetoothBuffer = "";
         let bluetoothTimeout = null;
         let itemsData = [];
-        let imgData = [];
         let manualQuantity = 0;
         let selectedSku = "";
 
@@ -247,7 +239,6 @@
 
         window.onload = function() {
             fetchInventoryAndItems();
-            fetchImgData();
             document.addEventListener('keydown', handleBluetoothInput);
             
             document.addEventListener('click', (e) => {
@@ -295,15 +286,6 @@
             });
         }
 
-        function fetchImgData() {
-            Papa.parse(IMG_SHEET_URL, {
-                download: true, header: true, skipEmptyLines: true,
-                complete: (results) => {
-                    imgData = results.data;
-                }
-            });
-        }
-
         function populateSkuDropdown() {
             const select = document.getElementById('sku-select');
             while (select.children.length > 1) select.removeChild(select.lastChild);
@@ -330,43 +312,20 @@
             document.getElementById('qty-display').innerText = '0';
 
             if (!sku) {
-                document.getElementById('product-preview-container').style.display = 'none';
+                document.getElementById('product-name-display').style.display = 'none';
                 return;
             }
 
             const item = itemsData.find(row => getValNormalized(row, 'SKU') === sku);
             if (!item) {
-                document.getElementById('product-preview-container').style.display = 'none';
+                document.getElementById('product-name-display').style.display = 'none';
                 return;
             }
 
             const productName = getValNormalized(item, 'Name') || 'Unknown Product';
-            
-            const imgMatch = imgData.find(row => {
-                const imgName = getValNormalized(row, 'Product Name') || getValNormalized(row, 'Name');
-                return imgName.toLowerCase() === productName.toLowerCase();
-            });
-
-            // FIXED: Standardized to use the robust case-insensitive parser for image columns
-            const imageUrl = imgMatch ? (
-                getValNormalized(imgMatch, 'DirectImageURL') || 
-                getValNormalized(imgMatch, 'Image') || 
-                getValNormalized(imgMatch, 'URL') ||
-                Object.values(imgMatch)[1] || ''
-            ) : '';
-
-            document.getElementById('product-name').innerText = productName;
-            const imgElement = document.getElementById('product-image');
-            
-            if (imageUrl && imageUrl.startsWith('http')) {
-                imgElement.src = imageUrl;
-                imgElement.style.display = 'block';
-                imgElement.onerror = () => { imgElement.style.display = 'none'; };
-            } else {
-                imgElement.style.display = 'none';
-            }
-
-            document.getElementById('product-preview-container').style.display = 'block';
+            const textPreview = document.getElementById('product-name-display');
+            textPreview.innerText = productName;
+            textPreview.style.display = 'block';
         }
 
         function increaseQty() {
@@ -386,7 +345,7 @@
             selectedSku = "";
             document.getElementById('sku-select').value = '';
             document.getElementById('qty-display').innerText = '0';
-            document.getElementById('product-preview-container').style.display = 'none';
+            document.getElementById('product-name-display').style.display = 'none';
             document.getElementById('manual-stock-modal').classList.add('active');
         }
 
@@ -414,7 +373,7 @@
                 scannedItems[selectedSku] = {
                     count: manualQuantity,
                     data: {
-                        name: document.getElementById('product-name').innerText,
+                        name: document.getElementById('product-name-display').innerText,
                         sku: selectedSku,
                         detail1: '',
                         detail2: ''
