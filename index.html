@@ -202,6 +202,20 @@
                 </div>
 
                 <div class="form-group">
+                    <label for="color-select">Select Color:</label>
+                    <select id="color-select" onchange="onColorSelected()">
+                        <option value="">-- Choose Color --</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="size-select">Select Size:</label>
+                    <select id="size-select" onchange="onSizeSelected()">
+                        <option value="">-- Choose Size --</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
                     <label for="sku-select">Select SKU:</label>
                     <select id="sku-select" onchange="onSkuSelected()">
                         <option value="">-- Choose SKU --</option>
@@ -323,9 +337,13 @@
 
         function onNameSelected() {
             const selectedName = document.getElementById('name-select').value;
+            const colorSelect = document.getElementById('color-select');
+            const sizeSelect = document.getElementById('size-select');
             const skuSelect = document.getElementById('sku-select');
             
-            // Wipe existing SKU selections
+            // Wipe downstream selections cleanly
+            while (colorSelect.children.length > 1) colorSelect.removeChild(colorSelect.lastChild);
+            while (sizeSelect.children.length > 1) sizeSelect.removeChild(sizeSelect.lastChild);
             while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
             
             selectedSku = "";
@@ -335,10 +353,73 @@
 
             if (!selectedName) return;
 
-            const uniqueSkus = new Set();
-            // Filter configuration records matching selected item title
+            const uniqueColors = new Set();
             itemsData.forEach(item => {
                 if (getValNormalized(item, 'Name') === selectedName) {
+                    const color = getValNormalized(item, 'Detail1'); // Column G / Color Name
+                    if (color && !uniqueColors.has(color)) {
+                        uniqueColors.add(color);
+                        const option = document.createElement('option');
+                        option.value = color;
+                        option.textContent = color;
+                        colorSelect.appendChild(option);
+                    }
+                }
+            });
+        }
+
+        function onColorSelected() {
+            const selectedName = document.getElementById('name-select').value;
+            const selectedColor = document.getElementById('color-select').value;
+            const sizeSelect = document.getElementById('size-select');
+            const skuSelect = document.getElementById('sku-select');
+            
+            while (sizeSelect.children.length > 1) sizeSelect.removeChild(sizeSelect.lastChild);
+            while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
+            
+            selectedSku = "";
+            manualQuantity = 0;
+            updateQtyDisplay();
+            document.getElementById('product-name-display').style.display = 'none';
+
+            if (!selectedName || !selectedColor) return;
+
+            const uniqueSizes = new Set();
+            itemsData.forEach(item => {
+                if (getValNormalized(item, 'Name') === selectedName && getValNormalized(item, 'Detail1') === selectedColor) {
+                    const size = getValNormalized(item, 'Detail2'); // Column J / Size
+                    if (size && !uniqueSizes.has(size)) {
+                        uniqueSizes.add(size);
+                        const option = document.createElement('option');
+                        option.value = size;
+                        option.textContent = size;
+                        sizeSelect.appendChild(option);
+                    }
+                }
+            });
+        }
+
+        function onSizeSelected() {
+            const selectedName = document.getElementById('name-select').value;
+            const selectedColor = document.getElementById('color-select').value;
+            const selectedSize = document.getElementById('size-select').value;
+            const skuSelect = document.getElementById('sku-select');
+            
+            while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
+            
+            selectedSku = "";
+            manualQuantity = 0;
+            updateQtyDisplay();
+            document.getElementById('product-name-display').style.display = 'none';
+
+            if (!selectedName || !selectedColor || !selectedSize) return;
+
+            const uniqueSkus = new Set();
+            itemsData.forEach(item => {
+                if (getValNormalized(item, 'Name') === selectedName && 
+                    getValNormalized(item, 'Detail1') === selectedColor && 
+                    getValNormalized(item, 'Detail2') === selectedSize) {
+                    
                     const sku = getValNormalized(item, 'SKU');
                     if (sku && !uniqueSkus.has(sku)) {
                         uniqueSkus.add(sku);
@@ -349,6 +430,12 @@
                     }
                 }
             });
+
+            // If there's exactly 1 matching SKU variant, automatically select it to speed up entry
+            if (skuSelect.children.length === 2) {
+                skuSelect.selectedIndex = 1;
+                onSkuSelected();
+            }
         }
 
         function onSkuSelected() {
@@ -403,6 +490,12 @@
             selectedSku = "";
             document.getElementById('name-select').value = '';
             
+            const colorSelect = document.getElementById('color-select');
+            while (colorSelect.children.length > 1) colorSelect.removeChild(colorSelect.lastChild);
+
+            const sizeSelect = document.getElementById('size-select');
+            while (sizeSelect.children.length > 1) sizeSelect.removeChild(sizeSelect.lastChild);
+
             const skuSelect = document.getElementById('sku-select');
             while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
             
