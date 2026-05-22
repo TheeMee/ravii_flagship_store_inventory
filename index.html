@@ -216,16 +216,12 @@
     <input type="text" id="bt-trap" autofocus inputmode="none">
 
     <script>
-        // --- CORRECTED SHEET URL CONFIGURATION ---
         const BASE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub';
         
-        // Tab IDs fixed based on layout structures:
-        const ITEMS_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=0&single=true&output=csv`;       // "Items" Tab
-        const IMG_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=2425994465&single=true&output=csv`; // "Img" Tab
-        
+        const ITEMS_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=0&single=true&output=csv`;       
+        const IMG_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=2425994465&single=true&output=csv`; 
         const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwflxt9AoEebPUlKEXTY0WlouILSd4Zx9oQorMyytdIHrsgOghD94dK16iLzzRxNiNX/exec'; 
 
-        // --- STATE ---
         let productDB = {}; 
         let scannedItems = {}; 
         let html5QrcodeScanner = null;
@@ -272,7 +268,6 @@
             return foundKey ? String(obj[foundKey]).trim() : '';
         }
 
-        // Consolidated Fetch: Loads scanner DB and Dropdown items simultaneously from GID=0
         function fetchInventoryAndItems() {
             Papa.parse(ITEMS_SHEET_URL, {
                 download: true, header: true, skipEmptyLines: true,
@@ -280,7 +275,6 @@
                     itemsData = results.data;
                     
                     results.data.forEach(row => {
-                        // Header matched directly to "Product Variant | Variant 1"
                         const barcode = getValNormalized(row, 'Product Variant | Variant 1');
                         if (barcode) {
                             productDB[barcode] = {
@@ -353,7 +347,13 @@
                 return imgName.toLowerCase() === productName.toLowerCase();
             });
 
-            const imageUrl = imgMatch ? (imgMatch.DirectImageURL || imgMatch.B || Object.values(imgMatch)[1] || '') : '';
+            // FIXED: Standardized to use the robust case-insensitive parser for image columns
+            const imageUrl = imgMatch ? (
+                getValNormalized(imgMatch, 'DirectImageURL') || 
+                getValNormalized(imgMatch, 'Image') || 
+                getValNormalized(imgMatch, 'URL') ||
+                Object.values(imgMatch)[1] || ''
+            ) : '';
 
             document.getElementById('product-name').innerText = productName;
             const imgElement = document.getElementById('product-image');
