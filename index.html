@@ -185,4 +185,379 @@
         <button id="btn-incoming-inventory" onclick="syncToGoogleSheet('Incoming inventory')">➕ Add Stock</button>
         <button id="btn-stock-count" onclick="syncToGoogleSheet('Stock Count')">📦 Stock Count</button>
         <button id="btn-manual-stock" onclick="openManualStockModal()">✏️ Manual Add</button>
-        <button id="btn-export" onclick="exportCSV()">
+        <button id="btn-export" onclick="exportCSV()">📥 Export CSV</button>
+    </footer>
+
+    <div id="manual-stock-modal" class="modal-overlay">
+        <div class="modal">
+            <button class="modal-close" onclick="closeManualStockModal()">✕</button>
+            <div class="modal-header">Manual Add</div>
+            
+            <div class="modal-content">
+                <div class="form-group">
+                    <label for="sku-select">Select SKU:</label>
+                    <select id="sku-select" onchange="onSkuSelected()">
+                        <option value="">-- Choose SKU --</option>
+                    </select>
+                </div>
+
+                <div id="product-name-display" class="product-text-preview" style="display: none;"></div>
+
+                <div class="quantity-control">
+                    <button class="qty-btn minus-btn" onclick="decreaseQty()">−</button>
+                    <div class="qty-display positive" id="qty-display">0</div>
+                    <button class="qty-btn" onclick="increaseQty()">+</button>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button id="modal-cancel" onclick="closeManualStockModal()">Cancel</button>
+                <button id="modal-submit" onclick="submitManualCount()">Confirm & Add</button>
+            </div>
+        </div>
+    </div>
+
+    <input type="text" id="bt-trap" autofocus inputmode="none">
+
+    <script>
+        const BASE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub';
+        const ITEMS_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=0&single=true&output=csv`;       
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwflxt9AoEebPUlKEXTY0WlouILSd4Zx9oQorMyytdIHrsgOghD94dK16iLzzRxNiNX/exec'; 
+
+        let productDB = {}; 
+        let scannedItems = {}; 
+        let html5QrcodeScanner = null;
+        let isCameraRunning = false;
+        let bluetoothBuffer = "";
+        let bluetoothTimeout = null;
+        let itemsData = [];
+        let manualQuantity = 0;
+        let selectedSku = "";
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playBeep() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        window.onload = function() {
+            fetchInventoryAndItems();
+            document.addEventListener('keydown', handleBluetoothInput);
+            
+            document.addEventListener('click', (e) => {
+                if (document.getElementById('manual-stock-modal').classList.contains('active')) {
+                    return; 
+                }
+                const formElements = ['BUTTON', 'SELECT', 'OPTION', 'INPUT', 'TEXTAREA'];
+                if (formElements.includes(e.target.tagName)) {
+                    return;
+                }
+                document.getElementById('bt-trap').focus();
+            });
+        };
+
+        function getValNormalized(obj, targetKey) {
+            if (!obj) return '';
+            const foundKey = Object.keys(obj).find(k => k.trim().toLowerCase() === targetKey.trim().toLowerCase());
+            return foundKey ? String(obj[foundKey]).trim() : '';
+        }
+
+        function fetchInventoryAndItems() {
+            Papa.parse(ITEMS_SHEET_URL, {
+                download: true, header: true, skipEmptyLines: true,
+                complete: (results) => {
+                    itemsData = results.data;
+                    
+                    results.data.forEach(row => {
+                        const barcode = getValNormalized(row, 'Product Variant | Variant 1');
+                        if (barcode) {
+                            productDB[barcode] = {
+                                name: getValNormalized(row, 'Name') || 'Unknown',
+                                sku: getValNormalized(row, 'SKU') || 'N/A',
+                                detail1: getValNormalized(row, 'Detail1'),
+                                detail2: getValNormalized(row, 'Detail2')
+                            };
+                        }
+                    });
+                    
+                    document.getElementById('status').innerText = `Ready. ${Object.keys(productDB).length} variations loaded.`;
+                    populateSkuDropdown();
+                },
+                error: () => {
+                    document.getElementById('status').innerText = "❌ Error loading Items sheet.";
+                }
+            });
+        }
+
+        function populateSkuDropdown() {
+            const select = document.getElementById('sku-select');
+            while (select.children.length > 1) select.removeChild(select.lastChild);
+            
+            const reversedItems = [...itemsData].reverse();
+            const uniqueSkus = new Set();
+            
+            reversedItems.forEach(item => {
+                const sku = getValNormalized(item, 'SKU');
+                if (sku && !uniqueSkus.has(sku)) {
+                    uniqueSkus.add(sku);
+                    const option = document.createElement('option');
+                    option.value = sku;
+                    option.textContent = sku;
+                    select.appendChild(option);
+                }
+            });
+        }
+
+        function onSkuSelected() {
+            const sku = document.getElementById('sku-select').value;
+            selectedSku = sku;
+            manualQuantity = 0;
+            updateQtyDisplay();
+
+            if (!sku) {
+                document.getElementById('product-name-display').style.display = 'none';
+                return;
+            }
+
+            const item = itemsData.find(row => getValNormalized(row, 'SKU') === sku);
+            if (!item) {
+                document.getElementById('product-name-display').style.display = 'none';
+                return;
+            }
+
+            const productName = getValNormalized(item, 'Name') || 'Unknown Product';
+            const textPreview = document.getElementById('product-name-display');
+            textPreview.innerText = productName;
+            textPreview.style.display = 'block';
+        }
+
+        function updateQtyDisplay() {
+            const display = document.getElementById('qty-display');
+            display.innerText = manualQuantity;
+            if (manualQuantity >= 0) {
+                display.className = "qty-display positive";
+            } else {
+                display.className = "qty-display negative";
+            }
+        }
+
+        function increaseQty() {
+            manualQuantity++;
+            updateQtyDisplay();
+        }
+
+        function decreaseQty() {
+            manualQuantity--; // Removed boundary to let it dip below zero freely
+            updateQtyDisplay();
+        }
+
+        function openManualStockModal() {
+            manualQuantity = 0;
+            selectedSku = "";
+            document.getElementById('sku-select').value = '';
+            updateQtyDisplay();
+            document.getElementById('product-name-display').style.display = 'none';
+            document.getElementById('manual-stock-modal').classList.add('active');
+        }
+
+        function closeManualStockModal() {
+            document.getElementById('manual-stock-modal').classList.remove('active');
+            setTimeout(() => {
+                document.getElementById('bt-trap').focus();
+            }, 150);
+        }
+
+        function submitManualCount() {
+            if (!selectedSku) {
+                alert("Please select a SKU");
+                return;
+            }
+            if (manualQuantity === 0) {
+                alert("Quantity cannot be 0");
+                return;
+            }
+
+            if (scannedItems[selectedSku]) {
+                scannedItems[selectedSku].count += manualQuantity;
+                scannedItems[selectedSku].timestamp = Date.now();
+                // If sum becomes 0, remove it from stack to prevent bugs
+                if (scannedItems[selectedSku].count === 0) {
+                    delete scannedItems[selectedSku];
+                }
+            } else {
+                scannedItems[selectedSku] = {
+                    count: manualQuantity,
+                    data: {
+                        name: document.getElementById('product-name-display').innerText,
+                        sku: selectedSku,
+                        detail1: '',
+                        detail2: ''
+                    },
+                    timestamp: Date.now(),
+                    isManual: true
+                };
+            }
+
+            updateUI();
+            closeManualStockModal();
+            playBeep();
+        }
+
+        function handleScan(barcode) {
+            barcode = barcode.trim();
+            const product = productDB[barcode];
+            if (product) {
+                playBeep();
+                const sku = product.sku;
+                if (scannedItems[sku]) {
+                    scannedItems[sku].count++;
+                    scannedItems[sku].timestamp = Date.now();
+                } else {
+                    scannedItems[sku] = { count: 1, data: product, timestamp: Date.now() };
+                }
+                updateUI();
+            } else {
+                alert("Not Found: " + barcode);
+            }
+        }
+
+        function updateUI() {
+            const list = document.getElementById('scanned-list');
+            const itemsArr = Object.values(scannedItems);
+            document.getElementById('unique-count').innerText = itemsArr.length;
+            document.getElementById('total-count').innerText = itemsArr.reduce((s, i) => s + i.count, 0);
+            document.getElementById('empty-msg').style.display = itemsArr.length > 0 ? 'none' : 'block';
+            
+            itemsArr.sort((a, b) => b.timestamp - a.timestamp);
+            list.innerHTML = itemsArr.map(item => {
+                const modeClass = item.count >= 0 ? 'incoming' : 'outgoing';
+                return `
+                    <div class="item-card ${modeClass}">
+                        <div class="item-info">
+                            <div class="item-name">${item.data.name}</div>
+                            <div class="item-detail">${item.data.detail1 || ''} ${item.data.detail2 || ''}</div>
+                            <div class="item-sku">SKU: ${item.data.sku}</div>
+                        </div>
+                        <div class="item-count ${modeClass}">${item.count}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function syncToGoogleSheet(target) {
+            const itemsArr = Object.values(scannedItems);
+            if (itemsArr.length === 0) return alert("Nothing to sync!");
+            
+            let btnId = (target === 'Incoming inventory') ? 'btn-incoming-inventory' : 'btn-stock-count';
+            const btn = document.getElementById(btnId);
+            if (!btn) return alert(`Button mapping error`);
+            const originalText = btn.innerText;
+
+            if (!confirm(`Synchronize list adjustments?`)) return;
+
+            btn.innerText = "⌛...";
+            btn.disabled = true;
+
+            try {
+                // If clicking Add Stock, automatically route positives to 'Incoming' and negatives to 'Outgoing'
+                if (target === 'Incoming inventory') {
+                    const incomingList = itemsArr.filter(i => i.count > 0);
+                    const outgoingList = itemsArr.filter(i => i.count < 0);
+
+                    if (incomingList.length > 0) {
+                        await fetch(APPS_SCRIPT_URL, {
+                            method: 'POST',
+                            mode: 'no-cors',
+                            cache: 'no-cache',
+                            body: JSON.stringify({
+                                target: 'Incoming inventory',
+                                items: incomingList.map(item => ({ sku: item.data.sku, count: item.count }))
+                            })
+                        });
+                    }
+
+                    if (outgoingList.length > 0) {
+                        await fetch(APPS_SCRIPT_URL, {
+                            method: 'POST',
+                            mode: 'no-cors',
+                            cache: 'no-cache',
+                            body: JSON.stringify({
+                                target: 'Outgoing inventory', // Converts and sends negative values directly to outgoing logs
+                                items: outgoingList.map(item => ({ sku: item.data.sku, count: Math.abs(item.count) }))
+                            })
+                        });
+                    }
+                } else {
+                    // Send directly as total set to Stock Count
+                    await fetch(APPS_SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        cache: 'no-cache',
+                        body: JSON.stringify({
+                            target: target,
+                            items: itemsArr.map(item => ({ sku: item.data.sku, count: item.count }))
+                        })
+                    });
+                }
+                
+                alert(`✅ Sync Complete!`);
+                if(confirm("Clear local workbench list?")) { scannedItems = {}; updateUI(); }
+            } catch (e) {
+                alert("❌ Sync processing failure encountered.");
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        function handleBluetoothInput(e) {
+            if (e.target.id !== 'bt-trap' && e.target.tagName === 'INPUT') return;
+            if (e.key === 'Enter') {
+                if (bluetoothBuffer.length > 0) { handleScan(bluetoothBuffer); bluetoothBuffer = ""; }
+            } else if (e.key.length === 1) {
+                bluetoothBuffer += e.key;
+            }
+            clearTimeout(bluetoothTimeout);
+            bluetoothTimeout = setTimeout(() => { bluetoothBuffer = ""; }, 200);
+        }
+
+        function toggleCamera() {
+            const btn = document.getElementById('btn-camera');
+            if (isCameraRunning) {
+                html5QrcodeScanner.stop().then(() => {
+                    document.getElementById('reader').style.display = 'none';
+                    btn.innerText = "📷 Cam Scan"; btn.classList.remove('stop-mode');
+                    isCameraRunning = false;
+                });
+            } else {
+                document.getElementById('reader').style.display = 'block';
+                btn.innerText = "Stop Cam"; btn.classList.add('stop-mode');
+                html5QrcodeScanner = new Html5Qrcode("reader");
+                html5QrcodeScanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, 
+                (text) => {
+                    handleScan(text);
+                    html5QrcodeScanner.pause();
+                    setTimeout(() => { if(isCameraRunning) html5QrcodeScanner.resume(); }, 1500);
+                }).then(() => isCameraRunning = true);
+            }
+        }
+
+        function exportCSV() {
+            const items = Object.values(scannedItems);
+            if (items.length === 0) return alert("No items!");
+            let csv = "SKU,Name,Count\n" + items.map(i => `${i.data.sku},"${i.data.name}",${i.count}`).join("\n");
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `inventory_backup.csv`;
+            a.click();
+        }
+    </script>
+</body>
+</html>
