@@ -195,6 +195,13 @@
             
             <div class="modal-content">
                 <div class="form-group">
+                    <label for="name-select">Select Product Name:</label>
+                    <select id="name-select" onchange="onNameSelected()">
+                        <option value="">-- Choose Product --</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
                     <label for="sku-select">Select SKU:</label>
                     <select id="sku-select" onchange="onSkuSelected()">
                         <option value="">-- Choose SKU --</option>
@@ -287,7 +294,7 @@
                     });
                     
                     document.getElementById('status').innerText = `Ready. ${Object.keys(productDB).length} variations loaded.`;
-                    populateSkuDropdown();
+                    populateNameDropdown();
                 },
                 error: () => {
                     document.getElementById('status').innerText = "❌ Error loading Items sheet.";
@@ -295,21 +302,51 @@
             });
         }
 
-        function populateSkuDropdown() {
-            const select = document.getElementById('sku-select');
+        function populateNameDropdown() {
+            const select = document.getElementById('name-select');
             while (select.children.length > 1) select.removeChild(select.lastChild);
             
             const reversedItems = [...itemsData].reverse();
-            const uniqueSkus = new Set();
+            const uniqueNames = new Set();
             
             reversedItems.forEach(item => {
-                const sku = getValNormalized(item, 'SKU');
-                if (sku && !uniqueSkus.has(sku)) {
-                    uniqueSkus.add(sku);
+                const name = getValNormalized(item, 'Name');
+                if (name && !uniqueNames.has(name)) {
+                    uniqueNames.add(name);
                     const option = document.createElement('option');
-                    option.value = sku;
-                    option.textContent = sku;
+                    option.value = name;
+                    option.textContent = name;
                     select.appendChild(option);
+                }
+            });
+        }
+
+        function onNameSelected() {
+            const selectedName = document.getElementById('name-select').value;
+            const skuSelect = document.getElementById('sku-select');
+            
+            // Wipe existing SKU selections
+            while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
+            
+            selectedSku = "";
+            manualQuantity = 0;
+            updateQtyDisplay();
+            document.getElementById('product-name-display').style.display = 'none';
+
+            if (!selectedName) return;
+
+            const uniqueSkus = new Set();
+            // Filter configuration records matching selected item title
+            itemsData.forEach(item => {
+                if (getValNormalized(item, 'Name') === selectedName) {
+                    const sku = getValNormalized(item, 'SKU');
+                    if (sku && !uniqueSkus.has(sku)) {
+                        uniqueSkus.add(sku);
+                        const option = document.createElement('option');
+                        option.value = sku;
+                        option.textContent = sku;
+                        skuSelect.appendChild(option);
+                    }
                 }
             });
         }
@@ -332,8 +369,12 @@
             }
 
             const productName = getValNormalized(item, 'Name') || 'Unknown Product';
+            const detail1 = getValNormalized(item, 'Detail1');
+            const detail2 = getValNormalized(item, 'Detail2');
+            const detailStr = [detail1, detail2].filter(Boolean).join(' / ');
+
             const textPreview = document.getElementById('product-name-display');
-            textPreview.innerText = productName;
+            textPreview.innerText = detailStr ? `${productName} (${detailStr})` : productName;
             textPreview.style.display = 'block';
         }
 
@@ -353,14 +394,18 @@
         }
 
         function decreaseQty() {
-            manualQuantity--; // Removed boundary to let it dip below zero freely
+            manualQuantity--;
             updateQtyDisplay();
         }
 
         function openManualStockModal() {
             manualQuantity = 0;
             selectedSku = "";
-            document.getElementById('sku-select').value = '';
+            document.getElementById('name-select').value = '';
+            
+            const skuSelect = document.getElementById('sku-select');
+            while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
+            
             updateQtyDisplay();
             document.getElementById('product-name-display').style.display = 'none';
             document.getElementById('manual-stock-modal').classList.add('active');
@@ -386,7 +431,6 @@
             if (scannedItems[selectedSku]) {
                 scannedItems[selectedSku].count += manualQuantity;
                 scannedItems[selectedSku].timestamp = Date.now();
-                // If sum becomes 0, remove it from stack to prevent bugs
                 if (scannedItems[selectedSku].count === 0) {
                     delete scannedItems[selectedSku];
                 }
@@ -465,7 +509,6 @@
             btn.disabled = true;
 
             try {
-                // If clicking Add Stock, automatically route positives to 'Incoming' and negatives to 'Outgoing'
                 if (target === 'Incoming inventory') {
                     const incomingList = itemsArr.filter(i => i.count > 0);
                     const outgoingList = itemsArr.filter(i => i.count < 0);
@@ -488,13 +531,12 @@
                             mode: 'no-cors',
                             cache: 'no-cache',
                             body: JSON.stringify({
-                                target: 'Outgoing inventory', // Converts and sends negative values directly to outgoing logs
+                                target: 'Outgoing inventory',
                                 items: outgoingList.map(item => ({ sku: item.data.sku, count: Math.abs(item.count) }))
                             })
                         });
                     }
                 } else {
-                    // Send directly as total set to Stock Count
                     await fetch(APPS_SCRIPT_URL, {
                         method: 'POST',
                         mode: 'no-cors',
