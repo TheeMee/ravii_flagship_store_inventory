@@ -13,9 +13,9 @@
             --primary: #007AFF; 
             --success: #34C759; 
             --danger: #FF3B30; 
-            --sc-color: #8e44ad; /* Purple for SC */
-            --scanner-color: #2c3e50; /* Dark Blue for Scanner */
-            --transfer-color: #f39c12; /* Orange for Transfer */
+            --sc-color: #8e44ad; 
+            --scanner-color: #2c3e50; 
+            --transfer-color: #f39c12; 
             --bg: #f2f2f7;
             --card: #ffffff;
             --border: #c6c6c8;
@@ -99,7 +99,6 @@
         #btn-export { background-color: var(--transfer-color); padding: 14px; margin-top: 5px;}
         .stop-mode { background-color: var(--danger) !important; }
 
-        /* Modal Styles */
         .modal-overlay {
             display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0, 0, 0, 0.5); z-index: 2000; align-items: center; justify-content: center;
@@ -129,7 +128,7 @@
             background: #f5f5f5; padding: 15px; border-radius: 10px; margin: 15px 0;
             text-align: center;
         }
-        .product-preview img { max-width: 100%; max-height: 250px; border-radius: 8px; }
+        .product-preview img { max-width: 100%; max-height: 250px; border-radius: 8px; display: block; margin: 0 auto; }
         .product-preview-name { font-weight: 600; margin-top: 10px; font-size: 0.95rem; }
 
         .quantity-control {
@@ -217,11 +216,14 @@
     <input type="text" id="bt-trap" autofocus inputmode="none">
 
     <script>
-        // --- CONFIGURATION ---
-        const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=0&single=true&output=csv';
+        // --- CORRECTED SHEET URL CONFIGURATION ---
+        const BASE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub';
+        
+        // Tab IDs fixed based on layout structures:
+        const ITEMS_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=0&single=true&output=csv`;       // "Items" Tab
+        const IMG_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=2425994465&single=true&output=csv`; // "Img" Tab
+        
         const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwflxt9AoEebPUlKEXTY0WlouILSd4Zx9oQorMyytdIHrsgOghD94dK16iLzzRxNiNX/exec'; 
-        const ITEMS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=2425994465&single=true&output=csv'; 
-        const IMG_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=3408913377&single=true&output=csv'; 
 
         // --- STATE ---
         let productDB = {}; 
@@ -248,18 +250,14 @@
         }
 
         window.onload = function() {
-            fetchData();
-            fetchItemsData();
+            fetchInventoryAndItems();
             fetchImgData();
             document.addEventListener('keydown', handleBluetoothInput);
             
-            // INTUITIVE FOCUS DISPATCHER (Protects select controls when modal is active)
             document.addEventListener('click', (e) => {
-                // If manual modal is open, completely freeze the background bluetooth trap focus redirects
                 if (document.getElementById('manual-stock-modal').classList.contains('active')) {
                     return; 
                 }
-                
                 const formElements = ['BUTTON', 'SELECT', 'OPTION', 'INPUT', 'TEXTAREA'];
                 if (formElements.includes(e.target.tagName)) {
                     return;
@@ -274,12 +272,16 @@
             return foundKey ? String(obj[foundKey]).trim() : '';
         }
 
-        function fetchData() {
-            Papa.parse(SHEET_CSV_URL, {
+        // Consolidated Fetch: Loads scanner DB and Dropdown items simultaneously from GID=0
+        function fetchInventoryAndItems() {
+            Papa.parse(ITEMS_SHEET_URL, {
                 download: true, header: true, skipEmptyLines: true,
                 complete: (results) => {
+                    itemsData = results.data;
+                    
                     results.data.forEach(row => {
-                        const barcode = getValNormalized(row, 'Product Variant ID');
+                        // Header matched directly to "Product Variant | Variant 1"
+                        const barcode = getValNormalized(row, 'Product Variant | Variant 1');
                         if (barcode) {
                             productDB[barcode] = {
                                 name: getValNormalized(row, 'Name') || 'Unknown',
@@ -289,17 +291,12 @@
                             };
                         }
                     });
-                    document.getElementById('status').innerText = `Ready. ${Object.keys(productDB).length} items loaded.`;
-                }
-            });
-        }
-
-        function fetchItemsData() {
-            Papa.parse(ITEMS_SHEET_URL, {
-                download: true, header: true, skipEmptyLines: true,
-                complete: (results) => {
-                    itemsData = results.data;
+                    
+                    document.getElementById('status').innerText = `Ready. ${Object.keys(productDB).length} variations loaded.`;
                     populateSkuDropdown();
+                },
+                error: () => {
+                    document.getElementById('status').innerText = "❌ Error loading Items sheet.";
                 }
             });
         }
@@ -395,7 +392,6 @@
 
         function closeManualStockModal() {
             document.getElementById('manual-stock-modal').classList.remove('active');
-            // Safe timeout delay ensures native mobile pickers finish collapsing smoothly before returning focus to hardware receiver
             setTimeout(() => {
                 document.getElementById('bt-trap').focus();
             }, 150);
@@ -506,4 +502,52 @@
                 alert("❌ Sync Error.");
             } finally {
                 btn.innerText = originalText;
-                btn.
+                btn.disabled = false;
+            }
+        }
+
+        function handleBluetoothInput(e) {
+            if (e.target.id !== 'bt-trap' && e.target.tagName === 'INPUT') return;
+            if (e.key === 'Enter') {
+                if (bluetoothBuffer.length > 0) { handleScan(bluetoothBuffer); bluetoothBuffer = ""; }
+            } else if (e.key.length === 1) {
+                bluetoothBuffer += e.key;
+            }
+            clearTimeout(bluetoothTimeout);
+            bluetoothTimeout = setTimeout(() => { bluetoothBuffer = ""; }, 200);
+        }
+
+        function toggleCamera() {
+            const btn = document.getElementById('btn-camera');
+            if (isCameraRunning) {
+                html5QrcodeScanner.stop().then(() => {
+                    document.getElementById('reader').style.display = 'none';
+                    btn.innerText = "📷 Cam Scan"; btn.classList.remove('stop-mode');
+                    isCameraRunning = false;
+                });
+            } else {
+                document.getElementById('reader').style.display = 'block';
+                btn.innerText = "Stop Cam"; btn.classList.add('stop-mode');
+                html5QrcodeScanner = new Html5Qrcode("reader");
+                html5QrcodeScanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, 
+                (text) => {
+                    handleScan(text);
+                    html5QrcodeScanner.pause();
+                    setTimeout(() => { if(isCameraRunning) html5QrcodeScanner.resume(); }, 1500);
+                }).then(() => isCameraRunning = true);
+            }
+        }
+
+        function exportCSV() {
+            const items = Object.values(scannedItems);
+            if (items.length === 0) return alert("No items!");
+            let csv = "SKU,Name,Count\n" + items.map(i => `${i.data.sku},"${i.data.name}",${i.count}`).join("\n");
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `inventory_backup.csv`;
+            a.click();
+        }
+    </script>
+</body>
+</html>
