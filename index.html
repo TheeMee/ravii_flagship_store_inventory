@@ -216,7 +216,7 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="sku-select">Select SKU:</label>
+                    <label for="sku-select">Select SKU (Always Active Search):</label>
                     <select id="sku-select" onchange="onSkuSelected()">
                         <option value="">-- Choose SKU --</option>
                     </select>
@@ -335,103 +335,148 @@
             });
         }
 
+        function populateAllSkusInitially() {
+            const skuSelect = document.getElementById('sku-select');
+            while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
+            
+            const uniqueSkus = new Set();
+            [...itemsData].reverse().forEach(item => {
+                const sku = getValNormalized(item, 'SKU');
+                if (sku && !uniqueSkus.has(sku)) {
+                    uniqueSkus.add(sku);
+                    const option = document.createElement('option');
+                    option.value = sku;
+                    option.textContent = sku;
+                    skuSelect.appendChild(option);
+                }
+            });
+        }
+
+        function updateSkuDropdownList(filteredList) {
+            const skuSelect = document.getElementById('sku-select');
+            const currentSelected = skuSelect.value;
+            while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
+            
+            const uniqueSkus = new Set();
+            [...filteredList].reverse().forEach(item => {
+                const sku = getValNormalized(item, 'SKU');
+                if (sku && !uniqueSkus.has(sku)) {
+                    uniqueSkus.add(sku);
+                    const option = document.createElement('option');
+                    option.value = sku;
+                    option.textContent = sku;
+                    skuSelect.appendChild(option);
+                }
+            });
+
+            if (uniqueSkus.has(currentSelected)) {
+                skuSelect.value = currentSelected;
+            } else {
+                skuSelect.value = '';
+            }
+        }
+
         function onNameSelected() {
             const selectedName = document.getElementById('name-select').value;
             const colorSelect = document.getElementById('color-select');
             const sizeSelect = document.getElementById('size-select');
-            const skuSelect = document.getElementById('sku-select');
             
-            // Wipe downstream selections cleanly
             while (colorSelect.children.length > 1) colorSelect.removeChild(colorSelect.lastChild);
             while (sizeSelect.children.length > 1) sizeSelect.removeChild(sizeSelect.lastChild);
-            while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
             
             selectedSku = "";
             manualQuantity = 0;
             updateQtyDisplay();
             document.getElementById('product-name-display').style.display = 'none';
 
-            if (!selectedName) return;
+            if (!selectedName) {
+                populateAllSkusInitially();
+                return;
+            }
+
+            const filteredByName = itemsData.filter(item => getValNormalized(item, 'Name') === selectedName);
 
             const uniqueColors = new Set();
-            itemsData.forEach(item => {
-                if (getValNormalized(item, 'Name') === selectedName) {
-                    const color = getValNormalized(item, 'Detail1'); // Column G / Color Name
-                    if (color && !uniqueColors.has(color)) {
-                        uniqueColors.add(color);
-                        const option = document.createElement('option');
-                        option.value = color;
-                        option.textContent = color;
-                        colorSelect.appendChild(option);
-                    }
+            filteredByName.forEach(item => {
+                const color = getValNormalized(item, 'Detail1');
+                if (color && !uniqueColors.has(color)) {
+                    uniqueColors.add(color);
+                    const option = document.createElement('option');
+                    option.value = color;
+                    option.textContent = color;
+                    colorSelect.appendChild(option);
                 }
             });
+
+            updateSkuDropdownList(filteredByName);
         }
 
         function onColorSelected() {
             const selectedName = document.getElementById('name-select').value;
             const selectedColor = document.getElementById('color-select').value;
             const sizeSelect = document.getElementById('size-select');
-            const skuSelect = document.getElementById('sku-select');
             
             while (sizeSelect.children.length > 1) sizeSelect.removeChild(sizeSelect.lastChild);
-            while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
             
             selectedSku = "";
             manualQuantity = 0;
             updateQtyDisplay();
             document.getElementById('product-name-display').style.display = 'none';
 
-            if (!selectedName || !selectedColor) return;
+            if (!selectedColor) {
+                const filteredByName = itemsData.filter(item => getValNormalized(item, 'Name') === selectedName);
+                updateSkuDropdownList(filteredByName);
+                return;
+            }
+
+            const filteredByColor = itemsData.filter(item => 
+                getValNormalized(item, 'Name') === selectedName && 
+                getValNormalized(item, 'Detail1') === selectedColor
+            );
 
             const uniqueSizes = new Set();
-            itemsData.forEach(item => {
-                if (getValNormalized(item, 'Name') === selectedName && getValNormalized(item, 'Detail1') === selectedColor) {
-                    const size = getValNormalized(item, 'Detail2'); // Column J / Size
-                    if (size && !uniqueSizes.has(size)) {
-                        uniqueSizes.add(size);
-                        const option = document.createElement('option');
-                        option.value = size;
-                        option.textContent = size;
-                        sizeSelect.appendChild(option);
-                    }
+            filteredByColor.forEach(item => {
+                const size = getValNormalized(item, 'Detail2');
+                if (size && !uniqueSizes.has(size)) {
+                    uniqueSizes.add(size);
+                    const option = document.createElement('option');
+                    option.value = size;
+                    option.textContent = size;
+                    sizeSelect.appendChild(option);
                 }
             });
+
+            updateSkuDropdownList(filteredByColor);
         }
 
         function onSizeSelected() {
             const selectedName = document.getElementById('name-select').value;
             const selectedColor = document.getElementById('color-select').value;
             const selectedSize = document.getElementById('size-select').value;
-            const skuSelect = document.getElementById('sku-select');
-            
-            while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
             
             selectedSku = "";
             manualQuantity = 0;
             updateQtyDisplay();
             document.getElementById('product-name-display').style.display = 'none';
 
-            if (!selectedName || !selectedColor || !selectedSize) return;
+            if (!selectedSize) {
+                const filteredByColor = itemsData.filter(item => 
+                    getValNormalized(item, 'Name') === selectedName && 
+                    getValNormalized(item, 'Detail1') === selectedColor
+                );
+                updateSkuDropdownList(filteredByColor);
+                return;
+            }
 
-            const uniqueSkus = new Set();
-            itemsData.forEach(item => {
-                if (getValNormalized(item, 'Name') === selectedName && 
-                    getValNormalized(item, 'Detail1') === selectedColor && 
-                    getValNormalized(item, 'Detail2') === selectedSize) {
-                    
-                    const sku = getValNormalized(item, 'SKU');
-                    if (sku && !uniqueSkus.has(sku)) {
-                        uniqueSkus.add(sku);
-                        const option = document.createElement('option');
-                        option.value = sku;
-                        option.textContent = sku;
-                        skuSelect.appendChild(option);
-                    }
-                }
-            });
+            const filteredBySize = itemsData.filter(item => 
+                getValNormalized(item, 'Name') === selectedName && 
+                getValNormalized(item, 'Detail1') === selectedColor && 
+                getValNormalized(item, 'Detail2') === selectedSize
+            );
 
-            // If there's exactly 1 matching SKU variant, automatically select it to speed up entry
+            updateSkuDropdownList(filteredBySize);
+
+            const skuSelect = document.getElementById('sku-select');
             if (skuSelect.children.length === 2) {
                 skuSelect.selectedIndex = 1;
                 onSkuSelected();
@@ -440,14 +485,15 @@
 
         function onSkuSelected() {
             const sku = document.getElementById('sku-select').value;
-            selectedSku = sku;
-            manualQuantity = 0;
-            updateQtyDisplay();
-
             if (!sku) {
+                selectedSku = "";
+                manualQuantity = 0;
+                updateQtyDisplay();
                 document.getElementById('product-name-display').style.display = 'none';
                 return;
             }
+
+            selectedSku = sku;
 
             const item = itemsData.find(row => getValNormalized(row, 'SKU') === sku);
             if (!item) {
@@ -455,13 +501,50 @@
                 return;
             }
 
-            const productName = getValNormalized(item, 'Name') || 'Unknown Product';
-            const detail1 = getValNormalized(item, 'Detail1');
-            const detail2 = getValNormalized(item, 'Detail2');
-            const detailStr = [detail1, detail2].filter(Boolean).join(' / ');
+            const name = getValNormalized(item, 'Name');
+            const color = getValNormalized(item, 'Detail1');
+            const size = getValNormalized(item, 'Detail2');
 
+            // If selected direct from long-list, safely reverse populate fields
+            if (document.getElementById('name-select').value !== name) {
+                document.getElementById('name-select').value = name;
+                
+                const colorSelect = document.getElementById('color-select');
+                while (colorSelect.children.length > 1) colorSelect.removeChild(colorSelect.lastChild);
+                const uniqueColors = new Set();
+                itemsData.forEach(i => {
+                    if (getValNormalized(i, 'Name') === name) {
+                        const c = getValNormalized(i, 'Detail1');
+                        if (c && !uniqueColors.has(c)) {
+                            uniqueColors.add(c);
+                            const opt = document.createElement('option');
+                            opt.value = c; opt.textContent = c;
+                            colorSelect.appendChild(opt);
+                        }
+                    }
+                });
+                colorSelect.value = color;
+
+                const sizeSelect = document.getElementById('size-select');
+                while (sizeSelect.children.length > 1) sizeSelect.removeChild(sizeSelect.lastChild);
+                const uniqueSizes = new Set();
+                itemsData.forEach(i => {
+                    if (getValNormalized(i, 'Name') === name && getValNormalized(i, 'Detail1') === color) {
+                        const s = getValNormalized(i, 'Detail2');
+                        if (s && !uniqueSizes.has(s)) {
+                            uniqueSizes.add(s);
+                            const opt = document.createElement('option');
+                            opt.value = s; opt.textContent = s;
+                            sizeSelect.appendChild(opt);
+                        }
+                    }
+                });
+                sizeSelect.value = size;
+            }
+
+            const detailStr = [color, size].filter(Boolean).join(' / ');
             const textPreview = document.getElementById('product-name-display');
-            textPreview.innerText = detailStr ? `${productName} (${detailStr})` : productName;
+            textPreview.innerText = detailStr ? `${name} (${detailStr})` : name;
             textPreview.style.display = 'block';
         }
 
@@ -496,8 +579,7 @@
             const sizeSelect = document.getElementById('size-select');
             while (sizeSelect.children.length > 1) sizeSelect.removeChild(sizeSelect.lastChild);
 
-            const skuSelect = document.getElementById('sku-select');
-            while (skuSelect.children.length > 1) skuSelect.removeChild(skuSelect.lastChild);
+            populateAllSkusInitially();
             
             updateQtyDisplay();
             document.getElementById('product-name-display').style.display = 'none';
