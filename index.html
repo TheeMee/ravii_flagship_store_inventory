@@ -253,17 +253,21 @@
             fetchImgData();
             document.addEventListener('keydown', handleBluetoothInput);
             
-            // FIXED FOCUS TRAP LISTENER: Prevents focus snapping when interacting with form inputs/dropdowns
+            // INTUITIVE FOCUS DISPATCHER (Protects select controls when modal is active)
             document.addEventListener('click', (e) => {
+                // If manual modal is open, completely freeze the background bluetooth trap focus redirects
+                if (document.getElementById('manual-stock-modal').classList.contains('active')) {
+                    return; 
+                }
+                
                 const formElements = ['BUTTON', 'SELECT', 'OPTION', 'INPUT', 'TEXTAREA'];
-                if (formElements.includes(e.target.tagName) || e.target.closest('#manual-stock-modal')) {
-                    return; // Let standard mobile/desktop selection work completely undisturbed
+                if (formElements.includes(e.target.tagName)) {
+                    return;
                 }
                 document.getElementById('bt-trap').focus();
             });
         };
 
-        // Helper function to find dictionary value by case-insensitive key name safely
         function getValNormalized(obj, targetKey) {
             if (!obj) return '';
             const foundKey = Object.keys(obj).find(k => k.trim().toLowerCase() === targetKey.trim().toLowerCase());
@@ -391,7 +395,10 @@
 
         function closeManualStockModal() {
             document.getElementById('manual-stock-modal').classList.remove('active');
-            document.getElementById('bt-trap').focus();
+            // Safe timeout delay ensures native mobile pickers finish collapsing smoothly before returning focus to hardware receiver
+            setTimeout(() => {
+                document.getElementById('bt-trap').focus();
+            }, 150);
         }
 
         function submitManualCount() {
@@ -499,52 +506,4 @@
                 alert("❌ Sync Error.");
             } finally {
                 btn.innerText = originalText;
-                btn.disabled = false;
-            }
-        }
-
-        function handleBluetoothInput(e) {
-            if (e.target.id !== 'bt-trap' && e.target.tagName === 'INPUT') return;
-            if (e.key === 'Enter') {
-                if (bluetoothBuffer.length > 0) { handleScan(bluetoothBuffer); bluetoothBuffer = ""; }
-            } else if (e.key.length === 1) {
-                bluetoothBuffer += e.key;
-            }
-            clearTimeout(bluetoothTimeout);
-            bluetoothTimeout = setTimeout(() => { bluetoothBuffer = ""; }, 200);
-        }
-
-        function toggleCamera() {
-            const btn = document.getElementById('btn-camera');
-            if (isCameraRunning) {
-                html5QrcodeScanner.stop().then(() => {
-                    document.getElementById('reader').style.display = 'none';
-                    btn.innerText = "📷 Cam Scan"; btn.classList.remove('stop-mode');
-                    isCameraRunning = false;
-                });
-            } else {
-                document.getElementById('reader').style.display = 'block';
-                btn.innerText = "Stop Cam"; btn.classList.add('stop-mode');
-                html5QrcodeScanner = new Html5Qrcode("reader");
-                html5QrcodeScanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, 
-                (text) => {
-                    handleScan(text);
-                    html5QrcodeScanner.pause();
-                    setTimeout(() => { if(isCameraRunning) html5QrcodeScanner.resume(); }, 1500);
-                }).then(() => isCameraRunning = true);
-            }
-        }
-
-        function exportCSV() {
-            const items = Object.values(scannedItems);
-            if (items.length === 0) return alert("No items!");
-            let csv = "SKU,Name,Count\n" + items.map(i => `${i.data.sku},"${i.data.name}",${i.count}`).join("\n");
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = `inventory_backup.csv`;
-            a.click();
-        }
-    </script>
-</body>
-</html>
+                btn.
