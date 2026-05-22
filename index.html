@@ -176,7 +176,7 @@
 
     <footer>
         <button id="btn-camera" onclick="toggleCamera()">📷 Camera Scan</button>
-        <button id="btn-incoming-inventory" onclick="syncToGoogleSheet('Incoming Inventory')">➕ Add Stock</button>
+        <button id="btn-incoming-inventory" onclick="syncToGoogleSheet('Incoming inventory')">➕ Add Stock</button>
         <button id="btn-stock-count" onclick="syncToGoogleSheet('Stock Count')">📦 Stock Count</button>
         <button id="btn-manual-stock" onclick="openManualStockModal()">✏️ Manual Add</button>
         <button id="btn-export" onclick="exportCSV()">📥 Export CSV</button>
@@ -220,8 +220,8 @@
         // --- CONFIGURATION ---
         const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=0&single=true&output=csv';
         const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwflxt9AoEebPUlKEXTY0WlouILSd4Zx9oQorMyytdIHrsgOghD94dK16iLzzRxNiNX/exec'; 
-        const ITEMS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=2425994465&single=true&output=csv'; // Items sheet - B: name, K: SKU
-        const IMG_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=3408913377&single=true&output=csv'; // Img sheet - A: product name, B: image URL
+        const ITEMS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=2425994465&single=true&output=csv'; 
+        const IMG_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub?gid=3408913377&single=true&output=csv'; 
 
         // --- STATE ---
         let productDB = {}; 
@@ -252,23 +252,36 @@
             fetchItemsData();
             fetchImgData();
             document.addEventListener('keydown', handleBluetoothInput);
+            
+            // FIXED FOCUS TRAP LISTENER: Prevents focus snapping when interacting with form inputs/dropdowns
             document.addEventListener('click', (e) => {
-                if(e.target.tagName !== 'BUTTON') document.getElementById('bt-trap').focus();
+                const formElements = ['BUTTON', 'SELECT', 'OPTION', 'INPUT', 'TEXTAREA'];
+                if (formElements.includes(e.target.tagName) || e.target.closest('#manual-stock-modal')) {
+                    return; // Let standard mobile/desktop selection work completely undisturbed
+                }
+                document.getElementById('bt-trap').focus();
             });
         };
+
+        // Helper function to find dictionary value by case-insensitive key name safely
+        function getValNormalized(obj, targetKey) {
+            if (!obj) return '';
+            const foundKey = Object.keys(obj).find(k => k.trim().toLowerCase() === targetKey.trim().toLowerCase());
+            return foundKey ? String(obj[foundKey]).trim() : '';
+        }
 
         function fetchData() {
             Papa.parse(SHEET_CSV_URL, {
                 download: true, header: true, skipEmptyLines: true,
                 complete: (results) => {
                     results.data.forEach(row => {
-                        const barcode = String(row['Product Variant ID']).trim();
+                        const barcode = getValNormalized(row, 'Product Variant ID');
                         if (barcode) {
                             productDB[barcode] = {
-                                name: row['Name'] || 'Unknown',
-                                sku: row['SKU'] || 'N/A',
-                                detail1: row['Detail1'] || '',
-                                detail2: row['Detail2'] || ''
+                                name: getValNormalized(row, 'Name') || 'Unknown',
+                                sku: getValNormalized(row, 'SKU') || 'N/A',
+                                detail1: getValNormalized(row, 'Detail1'),
+                                detail2: getValNormalized(row, 'Detail2')
                             };
                         }
                     });
@@ -298,18 +311,18 @@
 
         function populateSkuDropdown() {
             const select = document.getElementById('sku-select');
-            // Clear existing options except first
             while (select.children.length > 1) select.removeChild(select.lastChild);
             
-            // Reverse the items so newest (bottom) items appear first
             const reversedItems = [...itemsData].reverse();
+            const uniqueSkus = new Set();
             
             reversedItems.forEach(item => {
-                const sku = item.K || item['SKU']; // Column K
-                if (sku && sku.trim()) {
+                const sku = getValNormalized(item, 'SKU');
+                if (sku && !uniqueSkus.has(sku)) {
+                    uniqueSkus.add(sku);
                     const option = document.createElement('option');
-                    option.value = sku.trim();
-                    option.textContent = sku.trim();
+                    option.value = sku;
+                    option.textContent = sku;
                     select.appendChild(option);
                 }
             });
@@ -326,31 +339,28 @@
                 return;
             }
 
-            // Find the item in itemsData by SKU (column K)
-            const item = itemsData.find(row => (row.K || row['SKU'] || '').trim() === sku.trim());
+            const item = itemsData.find(row => getValNormalized(row, 'SKU') === sku);
             if (!item) {
                 document.getElementById('product-preview-container').style.display = 'none';
                 return;
             }
 
-            // Get product name from column C
-            const productName = item.C || item['Name'] || 'Unknown Product';
+            const productName = getValNormalized(item, 'Name') || 'Unknown Product';
             
-            // Find matching image from Img sheet by comparing Name (column C from Items with column A from Img)
             const imgMatch = imgData.find(row => {
-                const imgName = row.A || row['Product Name'] || '';
-                const itemName = item.C || item['Name'] || '';
-                return imgName.trim().toLowerCase() === itemName.trim().toLowerCase();
+                const imgName = getValNormalized(row, 'Product Name') || getValNormalized(row, 'Name');
+                return imgName.toLowerCase() === productName.toLowerCase();
             });
 
-            const imageUrl = imgMatch ? (imgMatch.B || imgMatch['DirectImageURL'] || '') : '';
+            const imageUrl = imgMatch ? (imgMatch.DirectImageURL || imgMatch.B || Object.values(imgMatch)[1] || '') : '';
 
             document.getElementById('product-name').innerText = productName;
             const imgElement = document.getElementById('product-image');
-            if (imageUrl) {
+            
+            if (imageUrl && imageUrl.startsWith('http')) {
                 imgElement.src = imageUrl;
-                imgElement.onerror = () => { imgElement.style.display = 'none'; };
                 imgElement.style.display = 'block';
+                imgElement.onerror = () => { imgElement.style.display = 'none'; };
             } else {
                 imgElement.style.display = 'none';
             }
@@ -381,6 +391,7 @@
 
         function closeManualStockModal() {
             document.getElementById('manual-stock-modal').classList.remove('active');
+            document.getElementById('bt-trap').focus();
         }
 
         function submitManualCount() {
@@ -393,7 +404,6 @@
                 return;
             }
 
-            // Add to scannedItems (mimicking scan behavior)
             if (scannedItems[selectedSku]) {
                 scannedItems[selectedSku].count += manualQuantity;
                 scannedItems[selectedSku].timestamp = Date.now();
@@ -446,7 +456,7 @@
                 <div class="item-card">
                     <div class="item-info">
                         <div class="item-name">${item.data.name}</div>
-                        <div class="item-detail">${item.data.detail1} ${item.data.detail2}</div>
+                        <div class="item-detail">${item.data.detail1 || ''} ${item.data.detail2 || ''}</div>
                         <div class="item-sku">SKU: ${item.data.sku}</div>
                     </div>
                     <div class="item-count">${item.count}</div>
@@ -459,8 +469,7 @@
             if (itemsArr.length === 0) return alert("Nothing to sync!");
             
             let btnId;
-            if (target === 'SC') btnId = 'btn-sync-sc';
-            else if (target === 'Incoming Inventory') btnId = 'btn-incoming-inventory';
+            if (target === 'Incoming inventory') btnId = 'btn-incoming-inventory';
             else if (target === 'Stock Count') btnId = 'btn-stock-count';
 
             const btn = document.getElementById(btnId);
