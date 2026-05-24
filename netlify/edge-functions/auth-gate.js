@@ -61,7 +61,7 @@ export default async (request, context) => {
         
         <!-- Google Sign In Button Element -->
         <div id="g_id_onload"
-             data-client_id="YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
+             data-client_id="741152123628-o2468hff3b3d8vg6qdj5tl76o6cqtpuu.apps.googleusercontent.com"
              data-login_uri="${url.origin}/"
              data-auto_prompt="true">
         </div>
