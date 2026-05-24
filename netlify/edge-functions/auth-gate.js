@@ -1,11 +1,20 @@
 // netlify/edge-functions/auth-gate.js
 export default async (request, context) => {
   const url = new URL(request.url);
+  let credential = null;
 
-  // 1. Handle the Google Auth callback
-  if (url.searchParams.has("credential")) {
-    const credential = url.searchParams.get("credential");
-    
+  // 1. Correctly catch Google's HTTP POST form submission
+  if (request.method === "POST") {
+    try {
+      const formData = await request.formData();
+      credential = formData.get("credential");
+    } catch (e) {
+      // Not form data, safe to ignore
+    }
+  }
+
+  // If a Google login token was submitted via POST
+  if (credential) {
     try {
       // Decode the Google JWT token safely at the server edge
       const [, payloadBase64] = credential.split('.');
@@ -27,6 +36,7 @@ export default async (request, context) => {
         );
         return response;
       } else {
+        // This stops the loop immediately for unauthorized users
         return new Response("Access Denied: This email is not on the ERP whitelist.", { status: 403 });
       }
     } catch (err) {
@@ -37,12 +47,11 @@ export default async (request, context) => {
   // 2. Check if they already have a valid session cookie
   const cookies = request.headers.get("cookie") || "";
   if (cookies.includes("erp_access=")) {
-    // Let them view your actual website and JavaScript console perfectly safely!
+    // Let them view your actual website safely!
     return context.next();
   }
 
-  // 3. If no session, serve a simple Google Sign-In button. 
-  // Outsiders see ONLY this button; your actual ERP code is safe on the server.
+  // 3. If no session, serve the simple Google Sign-In button.
   return new Response(`
     <!DOCTYPE html>
     <html>
@@ -59,7 +68,6 @@ export default async (request, context) => {
         <h2>Company ERP Gate</h2>
         <p>Please sign in with your authorized company email to proceed.</p>
         
-        <!-- Google Sign In Button Element -->
         <div id="g_id_onload"
              data-client_id="741152123628-o2468hff3b3d8vg6qdj5tl76o6cqtpuu.apps.googleusercontent.com"
              data-login_uri="${url.origin}/"
