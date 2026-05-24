@@ -14,9 +14,7 @@ export default async (request, context) => {
 
       // 🛑 YOUR STRICT EMAIL WHITELIST
       const ALLOWED_EMAILS = [
-        "ceo@yourcompany.com",
-        "manager@yourcompany.com",
-        "accountant@yourcompany.com"
+        "raviicustomerhelp@gmail.com"
       ];
 
       if (ALLOWED_EMAILS.includes(userEmail)) {
