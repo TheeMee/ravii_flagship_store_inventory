@@ -38,6 +38,34 @@
         h1 { margin: 0; font-size: 1.2rem; }
         #status { font-size: 0.8rem; color: #666; margin-top: 5px; }
 
+        /* Mode Tab Navigation Bar */
+        #tab-bar {
+            display: flex;
+            background: #e5e5ea;
+            padding: 4px;
+            border-radius: 10px;
+            margin: 10px 15px 5px 15px;
+            flex-shrink: 0;
+        }
+        .tab-btn {
+            flex: 1;
+            background: transparent;
+            color: #555;
+            padding: 10px 5px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .tab-btn.active {
+            background: white;
+            color: #000;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        }
+
         #summary-bar {
             background: #e5e5ea; padding: 10px 15px; font-size: 0.9rem;
             display: flex; justify-content: space-between; color: #555;
@@ -48,10 +76,10 @@
 
         #list-container {
             flex-grow: 1; overflow-y: auto; padding: 10px;
-            -webkit-overflow-scrolling: touch; padding-bottom: 220px; 
+            -webkit-overflow-scrolling: touch; padding-bottom: 240px; 
         }
 
-        .empty-state { text-align: center; color: #888; margin-top: 50px; padding: 20px; }
+        .empty-state { text-align: center; color: #888; margin-top: 45px; padding: 20px; }
 
         .item-card {
             background: var(--card); border-radius: 12px; padding: 16px;
@@ -62,6 +90,7 @@
         }
         .item-card.incoming { border-left-color: var(--primary); }
         .item-card.outgoing { border-left-color: var(--danger); }
+        .item-card.stock { border-left-color: var(--sc-color); }
 
         @keyframes flash {
             0% { background-color: #e3f9e5; }
@@ -80,14 +109,21 @@
         }
         .item-count.incoming { background: var(--primary); }
         .item-count.outgoing { background: var(--danger); }
+        .item-count.stock { background: var(--sc-color); }
 
         footer {
             position: fixed; bottom: 0; left: 0; right: 0;
             background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px); padding: 10px;
+            -webkit-backdrop-filter: blur(10px); padding: 12px;
             border-top: 1px solid var(--border); display: flex;
-            flex-direction: column; gap: 8px; z-index: 1000;
-            padding-bottom: max(20px, env(safe-area-inset-bottom));
+            flex-direction: column; gap: 6px; z-index: 1000;
+            padding-bottom: max(15px, env(safe-area-inset-bottom));
+        }
+
+        .footer-row {
+            display: flex;
+            gap: 6px;
+            width: 100%;
         }
 
         button {
@@ -98,11 +134,10 @@
         }
         button:active { opacity: 0.8; transform: scale(0.98); }
 
-        #btn-camera { background-color: var(--primary); }
-        #btn-incoming-inventory { background-color: var(--success); }
-        #btn-stock-count { background-color: var(--danger); }
-        #btn-manual-stock { background-color: #17c0eb; }
-        #btn-export { background-color: var(--transfer-color); padding: 14px; margin-top: 5px;}
+        #btn-camera { background-color: #2c3e50; flex: 1.2; }
+        #btn-manual-stock { background-color: #17c0eb; flex: 1.2; }
+        #btn-export { background-color: var(--transfer-color); flex: 1; }
+        #btn-sync { width: 100%; padding: 14px; font-size: 0.95rem; background-color: var(--primary); margin-top: 2px; }
         .stop-mode { background-color: var(--danger) !important; }
 
         .modal-overlay {
@@ -142,11 +177,9 @@
         .qty-btn { background: var(--primary); color: white; width: 50px; height: 50px; 
             border-radius: 50%; display: flex; align-items: center; justify-content: center; 
             font-size: 1.5rem; border: none; cursor: pointer; }
-        .qty-btn.minus-btn { background: var(--danger); }
+        .qty-btn.minus-btn { background: #7f8c8d; }
         .qty-btn:active { opacity: 0.8; }
-        .qty-display { font-size: 1.8rem; font-weight: 700; min-width: 80px; text-align: center; }
-        .qty-display.positive { color: var(--primary); }
-        .qty-display.negative { color: var(--danger); }
+        .qty-display { font-size: 1.8rem; font-weight: 700; min-width: 80px; text-align: center; color: #222; }
 
         .modal-footer { 
             display: flex; gap: 10px; padding-top: 15px; border-top: 1px solid #e0e0e0; margin-top: 15px;
@@ -161,9 +194,15 @@
 <body>
 
     <header>
-        <h1>Stock Counter</h1>
+        <h1>Stock Counter Pro</h1>
         <div id="status">Loading database...</div>
     </header>
+
+    <div id="tab-bar">
+        <button id="tab-incoming" class="tab-btn active" onclick="switchMode('incoming')">📥 Incoming</button>
+        <button id="tab-outgoing" class="tab-btn" onclick="switchMode('outgoing')">📤 Outgoing</button>
+        <button id="tab-stock" class="tab-btn" onclick="switchMode('stock')">📦 Stock Count</button>
+    </div>
     
     <div id="summary-bar">
         <span>Unique: <span id="unique-count">0</span></span>
@@ -175,23 +214,24 @@
     <div id="list-container">
         <div class="empty-state" id="empty-msg">
             <p style="font-size: 1.2rem; font-weight: 500; margin-bottom: 10px;">Ready to Scan</p>
-            <p style="color: #666;">Use Camera or Bluetooth</p>
+            <p style="color: #666;">Use Camera or Bluetooth Scanner</p>
         </div>
         <div id="scanned-list"></div>
     </div>
 
     <footer>
-        <button id="btn-camera" onclick="toggleCamera()">📷 Camera Scan</button>
-        <button id="btn-incoming-inventory" onclick="syncToGoogleSheet('Incoming inventory')">➕ Add Stock</button>
-        <button id="btn-stock-count" onclick="syncToGoogleSheet('Stock Count')">📦 Stock Count</button>
-        <button id="btn-manual-stock" onclick="openManualStockModal()">✏️ Manual Add</button>
-        <button id="btn-export" onclick="exportCSV()">📥 Export CSV</button>
+        <div class="footer-row">
+            <button id="btn-camera" onclick="toggleCamera()">📷 Camera Scan</button>
+            <button id="btn-manual-stock" onclick="openManualStockModal()">✏️ Manual Add</button>
+            <button id="btn-export" onclick="exportCSV()">📥 Export CSV</button>
+        </div>
+        <button id="btn-sync" onclick="syncActiveTab()">🚀 Sync Incoming Inventory</button>
     </footer>
 
     <div id="manual-stock-modal" class="modal-overlay">
         <div class="modal">
             <button class="modal-close" onclick="closeManualStockModal()">✕</button>
-            <div class="modal-header">Manual Add</div>
+            <div class="modal-header" id="modal-title-mode">Manual Add</div>
             
             <div class="modal-content">
                 <div class="form-group">
@@ -226,7 +266,7 @@
 
                 <div class="quantity-control">
                     <button class="qty-btn minus-btn" onclick="decreaseQty()">−</button>
-                    <div class="qty-display positive" id="qty-display">0</div>
+                    <div class="qty-display" id="qty-display">1</div>
                     <button class="qty-btn" onclick="increaseQty()">+</button>
                 </div>
             </div>
@@ -246,14 +286,21 @@
         const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwflxt9AoEebPUlKEXTY0WlouILSd4Zx9oQorMyytdIHrsgOghD94dK16iLzzRxNiNX/exec'; 
 
         let productDB = {}; 
-        let scannedItems = {}; 
         let html5QrcodeScanner = null;
         let isCameraRunning = false;
         let bluetoothBuffer = "";
         let bluetoothTimeout = null;
         let itemsData = [];
-        let manualQuantity = 0;
+        let manualQuantity = 1;
         let selectedSku = "";
+
+        // Three segregated active data environments
+        let currentMode = 'incoming'; // options: 'incoming', 'outgoing', 'stock'
+        let scannedData = {
+            incoming: {},
+            outgoing: {},
+            stock: {}
+        };
 
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         
@@ -272,15 +319,12 @@
             document.addEventListener('keydown', handleBluetoothInput);
             
             document.addEventListener('click', (e) => {
-                if (document.getElementById('manual-stock-modal').classList.contains('active')) {
-                    return; 
-                }
+                if (document.getElementById('manual-stock-modal').classList.contains('active')) return; 
                 const formElements = ['BUTTON', 'SELECT', 'OPTION', 'INPUT', 'TEXTAREA'];
-                if (formElements.includes(e.target.tagName)) {
-                    return;
-                }
+                if (formElements.includes(e.target.tagName)) return;
                 document.getElementById('bt-trap').focus();
             });
+            switchMode('incoming');
         };
 
         function getValNormalized(obj, targetKey) {
@@ -314,6 +358,29 @@
                     document.getElementById('status').innerText = "❌ Error loading Items sheet.";
                 }
             });
+        }
+
+        // Tab routing switcher
+        function switchMode(mode) {
+            currentMode = mode;
+            
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`tab-${mode}`).classList.add('active');
+            
+            const syncBtn = document.getElementById('btn-sync');
+            
+            if (mode === 'incoming') {
+                syncBtn.innerText = "🚀 Sync Incoming Inventory";
+                syncBtn.style.backgroundColor = "var(--primary)";
+            } else if (mode === 'outgoing') {
+                syncBtn.innerText = "🚀 Sync Outgoing Inventory";
+                syncBtn.style.backgroundColor = "var(--danger)";
+            } else if (mode === 'stock') {
+                syncBtn.innerText = "🚀 Sync Stock Count";
+                syncBtn.style.backgroundColor = "var(--sc-color)";
+            }
+            
+            updateUI();
         }
 
         function populateNameDropdown() {
@@ -385,8 +452,6 @@
             while (sizeSelect.children.length > 1) sizeSelect.removeChild(sizeSelect.lastChild);
             
             selectedSku = "";
-            manualQuantity = 0;
-            updateQtyDisplay();
             document.getElementById('product-name-display').style.display = 'none';
 
             if (!selectedName) {
@@ -419,8 +484,6 @@
             while (sizeSelect.children.length > 1) sizeSelect.removeChild(sizeSelect.lastChild);
             
             selectedSku = "";
-            manualQuantity = 0;
-            updateQtyDisplay();
             document.getElementById('product-name-display').style.display = 'none';
 
             if (!selectedColor) {
@@ -455,8 +518,6 @@
             const selectedSize = document.getElementById('size-select').value;
             
             selectedSku = "";
-            manualQuantity = 0;
-            updateQtyDisplay();
             document.getElementById('product-name-display').style.display = 'none';
 
             if (!selectedSize) {
@@ -487,8 +548,6 @@
             const sku = document.getElementById('sku-select').value;
             if (!sku) {
                 selectedSku = "";
-                manualQuantity = 0;
-                updateQtyDisplay();
                 document.getElementById('product-name-display').style.display = 'none';
                 return;
             }
@@ -505,7 +564,6 @@
             const color = getValNormalized(item, 'Detail1');
             const size = getValNormalized(item, 'Detail2');
 
-            // If selected direct from long-list, safely reverse populate fields
             if (document.getElementById('name-select').value !== name) {
                 document.getElementById('name-select').value = name;
                 
@@ -549,13 +607,7 @@
         }
 
         function updateQtyDisplay() {
-            const display = document.getElementById('qty-display');
-            display.innerText = manualQuantity;
-            if (manualQuantity >= 0) {
-                display.className = "qty-display positive";
-            } else {
-                display.className = "qty-display negative";
-            }
+            document.getElementById('qty-display').innerText = manualQuantity;
         }
 
         function increaseQty() {
@@ -564,12 +616,14 @@
         }
 
         function decreaseQty() {
-            manualQuantity--;
-            updateQtyDisplay();
+            if (manualQuantity > 1) {
+                manualQuantity--;
+                updateQtyDisplay();
+            }
         }
 
         function openManualStockModal() {
-            manualQuantity = 0;
+            manualQuantity = 1;
             selectedSku = "";
             document.getElementById('name-select').value = '';
             
@@ -582,6 +636,7 @@
             populateAllSkusInitially();
             
             updateQtyDisplay();
+            document.getElementById('modal-title-mode').innerText = `Manual Add (${currentMode.toUpperCase()})`;
             document.getElementById('product-name-display').style.display = 'none';
             document.getElementById('manual-stock-modal').classList.add('active');
         }
@@ -598,19 +653,18 @@
                 alert("Please select a SKU");
                 return;
             }
-            if (manualQuantity === 0) {
-                alert("Quantity cannot be 0");
+            if (manualQuantity <= 0) {
+                alert("Quantity must be greater than 0");
                 return;
             }
 
-            if (scannedItems[selectedSku]) {
-                scannedItems[selectedSku].count += manualQuantity;
-                scannedItems[selectedSku].timestamp = Date.now();
-                if (scannedItems[selectedSku].count === 0) {
-                    delete scannedItems[selectedSku];
-                }
+            let activeBucket = scannedData[currentMode];
+
+            if (activeBucket[selectedSku]) {
+                activeBucket[selectedSku].count += manualQuantity;
+                activeBucket[selectedSku].timestamp = Date.now();
             } else {
-                scannedItems[selectedSku] = {
+                activeBucket[selectedSku] = {
                     count: manualQuantity,
                     data: {
                         name: document.getElementById('product-name-display').innerText,
@@ -634,11 +688,13 @@
             if (product) {
                 playBeep();
                 const sku = product.sku;
-                if (scannedItems[sku]) {
-                    scannedItems[sku].count++;
-                    scannedItems[sku].timestamp = Date.now();
+                let activeBucket = scannedData[currentMode];
+
+                if (activeBucket[sku]) {
+                    activeBucket[sku].count++;
+                    activeBucket[sku].timestamp = Date.now();
                 } else {
-                    scannedItems[sku] = { count: 1, data: product, timestamp: Date.now() };
+                    activeBucket[sku] = { count: 1, data: product, timestamp: Date.now() };
                 }
                 updateUI();
             } else {
@@ -648,83 +704,61 @@
 
         function updateUI() {
             const list = document.getElementById('scanned-list');
-            const itemsArr = Object.values(scannedItems);
+            const activeBucket = scannedData[currentMode];
+            const itemsArr = Object.values(activeBucket);
+
             document.getElementById('unique-count').innerText = itemsArr.length;
             document.getElementById('total-count').innerText = itemsArr.reduce((s, i) => s + i.count, 0);
             document.getElementById('empty-msg').style.display = itemsArr.length > 0 ? 'none' : 'block';
             
             itemsArr.sort((a, b) => b.timestamp - a.timestamp);
             list.innerHTML = itemsArr.map(item => {
-                const modeClass = item.count >= 0 ? 'incoming' : 'outgoing';
                 return `
-                    <div class="item-card ${modeClass}">
+                    <div class="item-card ${currentMode}">
                         <div class="item-info">
                             <div class="item-name">${item.data.name}</div>
                             <div class="item-detail">${item.data.detail1 || ''} ${item.data.detail2 || ''}</div>
                             <div class="item-sku">SKU: ${item.data.sku}</div>
                         </div>
-                        <div class="item-count ${modeClass}">${item.count}</div>
+                        <div class="item-count ${currentMode}">${item.count}</div>
                     </div>
                 `;
             }).join('');
         }
 
-        async function syncToGoogleSheet(target) {
-            const itemsArr = Object.values(scannedItems);
-            if (itemsArr.length === 0) return alert("Nothing to sync!");
+        async function syncActiveTab() {
+            const itemsArr = Object.values(scannedData[currentMode]);
+            if (itemsArr.length === 0) return alert("Nothing to sync in this tab!");
             
-            let btnId = (target === 'Incoming inventory') ? 'btn-incoming-inventory' : 'btn-stock-count';
-            const btn = document.getElementById(btnId);
-            if (!btn) return alert(`Button mapping error`);
+            let target = '';
+            if (currentMode === 'incoming') target = 'Incoming inventory';
+            else if (currentMode === 'outgoing') target = 'Outgoing inventory';
+            else if (currentMode === 'stock') target = 'Stock Count';
+
+            const btn = document.getElementById('btn-sync');
             const originalText = btn.innerText;
 
-            if (!confirm(`Synchronize list adjustments?`)) return;
+            if (!confirm(`Synchronize current ${target} adjustments?`)) return;
 
-            btn.innerText = "⌛...";
+            btn.innerText = "⌛ Syncing...";
             btn.disabled = true;
 
             try {
-                if (target === 'Incoming inventory') {
-                    const incomingList = itemsArr.filter(i => i.count > 0);
-                    const outgoingList = itemsArr.filter(i => i.count < 0);
-
-                    if (incomingList.length > 0) {
-                        await fetch(APPS_SCRIPT_URL, {
-                            method: 'POST',
-                            mode: 'no-cors',
-                            cache: 'no-cache',
-                            body: JSON.stringify({
-                                target: 'Incoming inventory',
-                                items: incomingList.map(item => ({ sku: item.data.sku, count: item.count }))
-                            })
-                        });
-                    }
-
-                    if (outgoingList.length > 0) {
-                        await fetch(APPS_SCRIPT_URL, {
-                            method: 'POST',
-                            mode: 'no-cors',
-                            cache: 'no-cache',
-                            body: JSON.stringify({
-                                target: 'Outgoing inventory',
-                                items: outgoingList.map(item => ({ sku: item.data.sku, count: Math.abs(item.count) }))
-                            })
-                        });
-                    }
-                } else {
-                    await fetch(APPS_SCRIPT_URL, {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        cache: 'no-cache',
-                        body: JSON.stringify({
-                            target: target,
-                            items: itemsArr.map(item => ({ sku: item.data.sku, count: item.count }))
-                        })
-                    });
-                }
+                await fetch(APPS_SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    cache: 'no-cache',
+                    body: JSON.stringify({
+                        target: target,
+                        items: itemsArr.map(item => ({ sku: item.data.sku, count: item.count }))
+                    })
+                });
                 
-                alert(`✅ Sync Complete!`);
-                if(confirm("Clear local workbench list?")) { scannedItems = {}; updateUI(); }
+                alert(`✅ Sync Complete for ${target}!`);
+                if(confirm("Clear local workspace list for this tab?")) { 
+                    scannedData[currentMode] = {}; 
+                    updateUI(); 
+                }
             } catch (e) {
                 alert("❌ Sync processing failure encountered.");
             } finally {
@@ -749,7 +783,7 @@
             if (isCameraRunning) {
                 html5QrcodeScanner.stop().then(() => {
                     document.getElementById('reader').style.display = 'none';
-                    btn.innerText = "📷 Cam Scan"; btn.classList.remove('stop-mode');
+                    btn.innerText = "📷 Camera Scan"; btn.classList.remove('stop-mode');
                     isCameraRunning = false;
                 });
             } else {
@@ -766,13 +800,13 @@
         }
 
         function exportCSV() {
-            const items = Object.values(scannedItems);
-            if (items.length === 0) return alert("No items!");
+            const items = Object.values(scannedData[currentMode]);
+            if (items.length === 0) return alert("No items in this tab to export!");
             let csv = "SKU,Name,Count\n" + items.map(i => `${i.data.sku},"${i.data.name}",${i.count}`).join("\n");
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url; a.download = `inventory_backup.csv`;
+            a.href = url; a.download = `${currentMode}_inventory_backup.csv`;
             a.click();
         }
     </script>
