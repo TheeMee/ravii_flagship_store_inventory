@@ -340,7 +340,7 @@
                     itemsData = results.data;
                     
                     results.data.forEach(row => {
-                        const barcode = getValNormalized(row, 'Product Variant | Variant 1');
+                        const barcode = getValNormalized(row, 'Product Variant ID');
                         if (barcode) {
                             productDB[barcode] = {
                                 name: getValNormalized(row, 'Name') || 'Unknown',
