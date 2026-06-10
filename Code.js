@@ -905,3 +905,76 @@ function applyRecoveryCorrections(opts) {
   var res = applyDeltas_(deltaMap, "Recovery Correction", "empty-scan zeroing recovery");
   return { applied: deltaMap.size, updated: res.updated, missing: res.missing, preview: preview };
 }
+
+/* ====================================================================
+ * EDITOR-RUNNABLE RECOVERY HELPERS
+ * --------------------------------------------------------------------
+ * The Apps Script "Run" button can't pass arguments or print return
+ * values, so these two zero-arg functions wrap the recovery tooling with
+ * Logger.log output and a confirm gate. Workflow:
+ *   1. Run  auditRecoveryLog()    -> read-only; review the Execution log
+ *   2. Run  applyAutoRecovery()   -> dry run (CONFIRM=false) prints preview
+ *   3. Set  CONFIRM=true below, Run applyAutoRecovery() again -> WRITES
+ *   4. Run  auditRecoveryLog()    -> confirm corrections are gone
+ * ==================================================================== */
+
+/** Logs a possibly-large array in chunks so nothing is dropped by the log viewer. */
+function logChunked_(label, arr, perChunk) {
+  arr = arr || []; perChunk = perChunk || 40;
+  Logger.log(label + " (" + arr.length + ")");
+  for (var i = 0; i < arr.length; i += perChunk) {
+    Logger.log(JSON.stringify(arr.slice(i, i + perChunk)));
+  }
+}
+
+/**
+ * READ-ONLY. Run this first. Logs the auto recovery audit: the summary, the
+ * pure re-zero batches that will be backed out, every count batch (watch for
+ * the "MOSTLY_ZEROING_review" flag = a mixed batch that needs your judgment),
+ * and the per-SKU current -> reconstructed corrections.
+ */
+function auditRecoveryLog() {
+  var report = auditRecovery(); // auto mode: skips all PURE re-zero batches
+  Logger.log("=== RECOVERY AUDIT (read-only) ===");
+  Logger.log(JSON.stringify(report.summary));
+  logChunked_("SUSPECT re-zero batches (will be backed out)", report.suspectBatches, 20);
+  logChunked_("ALL count batches (review MOSTLY_ZEROING_review)", report.countBatches, 20);
+  logChunked_("Per-SKU corrections current -> reconstructed", report.skus, 40);
+  return report;
+}
+
+/**
+ * Backs out the AUTO-detected pure re-zero batches (the mirrored +N/-N bug)
+ * and restores each SKU's scanned value. Dry run by default — set CONFIRM=true
+ * after reviewing auditRecoveryLog(). Does NOT touch mixed batches; if the audit
+ * flagged any MOSTLY_ZEROING_review batch, handle those separately first.
+ */
+function applyAutoRecovery() {
+  var CONFIRM = false; // <-- change to true ONLY after reviewing auditRecoveryLog()
+
+  var suspects = computeRecovery_(null).order
+    .filter(function (b) { return b.suspectZero; })
+    .map(function (b) { return b.tsMs; });
+
+  if (!suspects.length) {
+    Logger.log("No pure re-zero batches detected. Nothing to auto-undo. " +
+               "If stock is still wrong, the damage is in a mixed batch — run auditRecoveryLog() and inspect MOSTLY_ZEROING_review.");
+    return { applied: 0 };
+  }
+
+  if (!CONFIRM) {
+    var preview = auditRecovery({ skipBatches: suspects });
+    Logger.log("=== DRY RUN — nothing written ===");
+    Logger.log("Will back out " + suspects.length + " re-zero batch(es): " + JSON.stringify(suspects));
+    Logger.log(JSON.stringify(preview.summary));
+    logChunked_("Corrections that WOULD be applied", preview.skus, 40);
+    Logger.log("Set CONFIRM=true at the top of applyAutoRecovery() and run again to WRITE.");
+    return { dryRun: true, suspectBatches: suspects, corrections: preview.skus.length };
+  }
+
+  var res = applyRecoveryCorrections({ skipBatches: suspects, confirm: true });
+  Logger.log("=== APPLIED ===");
+  Logger.log(JSON.stringify({ applied: res.applied, updated: res.updated, missing: res.missing }));
+  logChunked_("Corrections written (from -> to)", res.preview, 40);
+  return res;
+}
