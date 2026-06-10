@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>RAVii Stock</title>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+    <style>
+        :root {
+            --bg: #fbf6f1;            /* warm cream */
+            --card: #ffffff;
+            --ink: #3c302b;           /* warm dark brown */
+            --muted: #9c8b82;
+            --line: #efe4db;
+            --primary: #e8896b;       /* terracotta */
+            --primary-d: #d9745a;
+            --add: #4fb286;           /* fresh green */
+            --deduct: #e8896b;        /* terracotta */
+            --count: #b07bd1;         /* soft plum */
+            --show: #efb23e;          /* warm gold */
+            --danger: #e5604d;
+            --radius: 18px;
+            --shadow: 0 6px 18px rgba(120, 80, 60, 0.08);
+        }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+            height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+        }
+
+        header {
+            background: var(--card); padding: 12px 16px;
+            padding-top: max(12px, env(safe-area-inset-top));
+            border-bottom: 1px solid var(--line); flex-shrink: 0; z-index: 50;
+            display: flex; align-items: center; gap: 10px;
+        }
+        header .logo { font-size: 1.4rem; }
+        header h1 { margin: 0; font-size: 1.1rem; font-weight: 800; letter-spacing: -0.2px; }
+        header #status { font-size: 0.72rem; color: var(--muted); margin-top: 1px; }
+
+        /* ---- Scan sub-tab strip ---- */
+        #scan-tabs {
+            display: flex; gap: 4px; background: #f0e6dd; padding: 5px;
+            margin: 12px 16px 0; border-radius: 14px; flex-shrink: 0;
+        }
+        .subtab {
+            flex: 1; background: transparent; color: var(--muted);
+            padding: 9px 4px; border-radius: 10px; font-size: 0.8rem;
+            font-weight: 700; border: none; cursor: pointer; transition: all .18s;
+        }
+        .subtab.active { background: var(--card); color: var(--ink); box-shadow: var(--shadow); }
+
+        /* ---- Per-subtab control row ---- */
+        #scan-controls { padding: 12px 16px 0; flex-shrink: 0; }
+
+        .direction-toggle { display: flex; gap: 6px; background: #f0e6dd; padding: 5px; border-radius: 14px; }
+        .dir-btn {
+            flex: 1; border: none; padding: 12px; border-radius: 10px; font-weight: 800;
+            font-size: 0.95rem; cursor: pointer; color: var(--muted); background: transparent; transition: all .18s;
+        }
+        .dir-btn.active.add { background: var(--add); color: #fff; box-shadow: var(--shadow); }
+        .dir-btn.active.deduct { background: var(--deduct); color: #fff; box-shadow: var(--shadow); }
+        .dir-btn.active.show { background: var(--show); color: #4a3a10; box-shadow: var(--shadow); }
+        .dir-btn.active.unshow { background: var(--deduct); color: #fff; box-shadow: var(--shadow); }
+
+        .kind-toggle { display: flex; gap: 6px; }
+        .kind-btn {
+            flex: 1; border: 1.5px solid var(--line); background: var(--card); color: var(--muted);
+            padding: 10px; border-radius: 12px; font-weight: 700; font-size: 0.85rem; cursor: pointer;
+        }
+        .kind-btn.active { border-color: var(--count); color: var(--count); background: #faf3fc; }
+
+        #partial-scope { margin-top: 12px; }
+        .scope-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .scope-head span { font-size: 0.8rem; font-weight: 700; color: var(--muted); }
+        .add-scope-btn { border: none; background: var(--count); color: #fff; padding: 7px 12px; border-radius: 10px; font-weight: 700; font-size: 0.8rem; cursor: pointer; }
+        .scope-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .chip {
+            display: inline-flex; align-items: center; gap: 6px; background: #faf3fc; color: #8a5fae;
+            border: 1px solid #ecd9f5; padding: 6px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600;
+        }
+        .chip button { border: none; background: none; color: #b794d0; font-size: 1rem; cursor: pointer; line-height: 1; padding: 0; }
+        .scope-empty { font-size: 0.8rem; color: var(--muted); font-style: italic; }
+
+        /* ---- Summary ---- */
+        #summary-bar {
+            display: flex; gap: 10px; padding: 12px 16px 0; flex-shrink: 0;
+        }
+        .stat { flex: 1; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
+        .stat .num { font-size: 1.3rem; font-weight: 800; }
+        .stat .lbl { font-size: 0.7rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+
+        /* ---- Camera ---- */
+        #reader { width: 100%; background: #000; display: none; flex-shrink: 0; }
+
+        /* ---- Inventory bar ---- */
+        #inv-bar { display: none; padding: 12px 16px 0; flex-shrink: 0; }
+        #inv-search { width: 100%; padding: 11px 14px; border: 1px solid var(--line); border-radius: 12px; font-size: 0.95rem; background: var(--card); margin-bottom: 10px; }
+        .view-toggle { display: flex; gap: 5px; background: #f0e6dd; padding: 5px; border-radius: 13px; }
+        .view-btn { flex: 1; border: none; background: transparent; color: var(--muted); padding: 9px 4px; border-radius: 9px; font-weight: 700; font-size: 0.78rem; cursor: pointer; transition: all .18s; }
+        .view-btn.active { background: var(--card); color: var(--ink); box-shadow: var(--shadow); }
+
+        /* ---- Scrollable content ---- */
+        #content { flex-grow: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 16px 18px; }
+
+        .empty-state { text-align: center; color: var(--muted); margin-top: 40px; padding: 20px; }
+        .empty-state .big { font-size: 2.6rem; margin-bottom: 8px; }
+        .empty-state .t { font-size: 1.1rem; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+
+        /* ---- Aggregated scan group ---- */
+        .group {
+            background: var(--card); border-radius: var(--radius); margin-bottom: 12px;
+            box-shadow: var(--shadow); overflow: hidden; border-left: 5px solid var(--line);
+            animation: pop .35s ease;
+        }
+        .group.addDeduct { border-left-color: var(--primary); }
+        .group.stockCount { border-left-color: var(--count); }
+        .group.markShow { border-left-color: var(--show); }
+        @keyframes pop { 0% { transform: scale(.985); opacity: .4; } 100% { transform: scale(1); opacity: 1; } }
+
+        .group-head { display: flex; align-items: center; gap: 12px; padding: 15px 16px; cursor: pointer; user-select: none; }
+        .group-name { flex-grow: 1; font-weight: 700; font-size: 1.02rem; }
+        .group-sub { font-size: 0.74rem; color: var(--muted); font-weight: 500; margin-top: 2px; }
+        .group-qty { background: var(--ink); color: #fff; min-width: 40px; height: 34px; border-radius: 17px; display: flex; align-items: center; justify-content: center; padding: 0 12px; font-weight: 800; font-size: 1.05rem; }
+        .group.addDeduct .group-qty { background: var(--primary); }
+        .group.stockCount .group-qty { background: var(--count); }
+        .group.markShow .group-qty { background: var(--show); }
+        .chevron { color: var(--muted); transition: transform .2s; font-size: 0.9rem; }
+        .group.open .chevron { transform: rotate(90deg); }
+
+        .group-children { border-top: 1px solid var(--line); display: none; }
+        .group.open .group-children { display: block; }
+        .child {
+            display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line);
+        }
+        .child:last-child { border-bottom: none; }
+        .child-info { flex-grow: 1; min-width: 0; }
+        .child-variant { font-size: 0.9rem; font-weight: 600; }
+        .child-sku { font-size: 0.7rem; color: var(--muted); font-family: ui-monospace, monospace; margin-top: 2px; word-break: break-all; }
+        .child-controls { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
+        .ctl { width: 34px; height: 34px; border-radius: 50%; border: none; font-size: 1.2rem; font-weight: 700; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #fff; }
+        .ctl.plus { background: var(--add); }
+        .ctl.minus { background: #b8a99f; }
+        .ctl.cancel { background: var(--danger); width: 28px; height: 28px; border-radius: 8px; font-size: 0.85rem; }
+        .ctl:active { transform: scale(.9); }
+        .child-count { min-width: 34px; text-align: center; font-weight: 800; font-size: 1.05rem; }
+
+        /* ---- Inventory matrix ---- */
+        .brand-label { font-size: 0.78rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin: 6px 2px 10px; }
+        .product { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 14px; overflow: hidden; }
+        .product-head { display: flex; gap: 12px; padding: 12px; align-items: center; }
+        .product-img { width: 64px; height: 64px; border-radius: 12px; object-fit: cover; background: #f3ebe4; flex-shrink: 0; }
+        .product-img.noimg { display: flex; align-items: center; justify-content: center; font-size: 0.65rem; color: var(--muted); }
+        .product-title { font-weight: 700; font-size: 1rem; }
+        .product-meta { font-size: 0.74rem; color: var(--muted); margin-top: 2px; }
+        .matrix-wrap { overflow-x: auto; padding: 0 12px 12px; }
+        table.matrix { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+        table.matrix th, table.matrix td { border: 1px solid var(--line); padding: 7px 6px; text-align: center; min-width: 42px; }
+        table.matrix th { background: #faf5f0; font-weight: 700; }
+        table.matrix td.zero { color: #d6cabf; }
+        table.matrix td.cell { cursor: pointer; position: relative; }
+        table.matrix td.cell.on { box-shadow: inset 0 0 0 2px var(--show); }
+        table.matrix td.cell.live { background: #e9f8f0; color: #2f9e6e; font-weight: 800; }
+        table.matrix td.cell.willzero { background: #fdecec; color: #c0392b; font-weight: 800; }
+        .star { color: var(--show); font-size: 0.7rem; }
+        .wasn { font-size: 0.6rem; color: var(--muted); font-weight: 600; margin-top: 2px; }
+
+        /* ---- Count preview modal (scroll-gated) ---- */
+        #count-preview-summary { font-size: .85rem; color: var(--muted); padding: 0 2px 8px; }
+        #count-preview-body { max-height: 60vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+        #count-preview-hint { font-size: .78rem; color: var(--show); text-align: center; padding: 6px; font-weight: 700; }
+        #count-preview-yes[disabled] { opacity: .45; pointer-events: none; }
+
+        /* ---- Out-of-stock expandable section ---- */
+        .empty-section { margin-top: 18px; }
+        .empty-toggle { width: 100%; background: #f0e6dd; border: none; color: var(--muted); padding: 13px; border-radius: 12px; font-weight: 700; font-size: 0.85rem; cursor: pointer; }
+        .empty-toggle:active { opacity: .8; }
+        .empty-list { margin-top: 12px; opacity: 0.75; }
+
+        /* ---- Footer (scan actions) ---- */
+        footer {
+            background: rgba(255,255,255,.96); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border-top: 1px solid var(--line); padding: 10px 12px 8px; flex-shrink: 0;
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        .footer-row { display: flex; gap: 8px; }
+        footer button { border: none; padding: 12px 6px; border-radius: 12px; font-size: 0.8rem; font-weight: 700; cursor: pointer; color: #fff; transition: transform .1s, opacity .2s; }
+        footer button:active { opacity: .85; transform: scale(.98); }
+        #btn-camera { background: #6b5b52; flex: 1.1; }
+        #btn-manual { background: #17a2b8; flex: 1.1; }
+        #btn-export { background: #b8a99f; flex: 1; }
+        #btn-sync { width: 100%; padding: 15px; font-size: 1rem; background: var(--primary); }
+        #btn-sync:disabled { opacity: .6; }
+        .stop-mode { background: var(--danger) !important; }
+
+        /* ---- Bottom nav ---- */
+        nav#bottom-nav {
+            display: flex; background: var(--card); border-top: 1px solid var(--line);
+            flex-shrink: 0; padding-bottom: env(safe-area-inset-bottom);
+        }
+        .nav-btn { flex: 1; background: none; border: none; padding: 10px 4px 12px; cursor: pointer; color: var(--muted); font-weight: 700; font-size: 0.72rem; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+        .nav-btn .ic { font-size: 1.3rem; }
+        .nav-btn.active { color: var(--primary); }
+
+        /* ---- Modal ---- */
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(40,25,20,.45); z-index: 2000; align-items: center; justify-content: center; padding: 16px; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: #fff; border-radius: 22px; padding: 20px; width: 100%; max-width: 460px; max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,.3); position: relative; }
+        .modal-header { font-size: 1.2rem; font-weight: 800; margin-bottom: 14px; padding-right: 30px; }
+        .modal-close { position: absolute; top: 16px; right: 16px; background: none; border: none; font-size: 1.4rem; cursor: pointer; color: var(--muted); }
+        .modal-content { flex-grow: 1; overflow-y: auto; }
+        .form-group { margin-bottom: 13px; }
+        .form-group label { display: block; font-size: 0.82rem; font-weight: 700; margin-bottom: 5px; color: var(--ink); }
+        .form-group select, .form-group input { width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 11px; font-size: 1rem; font-family: inherit; background: #fff; }
+        .preview { background: #faf5f0; padding: 12px; border-radius: 12px; margin: 12px 0; text-align: center; font-weight: 700; }
+        .qty-control { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 16px 0; background: #faf5f0; padding: 14px; border-radius: 14px; }
+        .qty-btn { background: var(--primary); color: #fff; width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; border: none; cursor: pointer; }
+        .qty-btn.minus { background: #b8a99f; }
+        .qty-num { font-size: 1.9rem; font-weight: 800; min-width: 70px; text-align: center; }
+        .modal-footer { display: flex; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); margin-top: 14px; }
+        .modal-footer button { flex: 1; padding: 13px; font-size: 0.95rem; font-weight: 700; border: none; border-radius: 12px; cursor: pointer; }
+        .btn-primary { background: var(--add); color: #fff; }
+        .btn-grey { background: #ddd2c9; color: var(--ink); }
+
+        /* variance list */
+        .var-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+        .var-row .sku { font-family: ui-monospace, monospace; font-size: 0.78rem; }
+        .var-pill { font-weight: 800; }
+        .var-pill.up { color: var(--add); }
+        .var-pill.down { color: var(--danger); }
+        .var-summary { display: flex; gap: 8px; margin-bottom: 12px; }
+        .var-summary .stat { text-align: center; }
+
+        /* ---- Toasts ---- */
+        #toasts { position: fixed; left: 0; right: 0; bottom: 90px; z-index: 3000; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+        .toast { background: var(--ink); color: #fff; padding: 12px 18px; border-radius: 999px; font-size: 0.9rem; font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,.25); max-width: 90vw; animation: toastin .25s ease; }
+        .toast.success { background: var(--add); }
+        .toast.error { background: var(--danger); }
+        .toast.warn { background: var(--show); color: #4a3a10; }
+        .toast.muted { background: #efe9e3; color: var(--muted); box-shadow: 0 6px 18px rgba(120, 80, 60, .12); }
+        .toast.fade-out { animation: toastout .4s ease forwards; }
+        @keyframes toastin { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes toastout { from { transform: translateY(0); opacity: 1; } to { transform: translateY(8px); opacity: 0; } }
+
+        #bt-trap { position: absolute; opacity: 0; top: -1000px; left: -1000px; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <span class="logo">🛍️</span>
+        <div>
+            <h1>RAVii Stock</h1>
+            <div id="status">Loading…</div>
+        </div>
+    </header>
+
+    <!-- SCAN bars -->
+    <div id="scan-tabs">
+        <button class="subtab active" data-sub="addDeduct" onclick="switchScanSubTab('addDeduct')">± Add/Deduct</button>
+        <button class="subtab" data-sub="stockCount" onclick="switchScanSubTab('stockCount')">📦 Stock Count</button>
+        <button class="subtab" data-sub="markShow" onclick="switchScanSubTab('markShow')">⭐ Mark Show</button>
+    </div>
+
+    <div id="scan-controls"><!-- dynamic per subtab --></div>
+
+    <div id="summary-bar">
+        <div class="stat"><div class="num" id="unique-count">0</div><div class="lbl">Products</div></div>
+        <div class="stat"><div class="num" id="total-count">0</div><div class="lbl">Total Qty</div></div>
+    </div>
+
+    <!-- INVENTORY bar -->
+    <div id="inv-bar">
+        <input id="inv-search" type="text" placeholder="🔍 Search products…" oninput="renderInventory()">
+        <div class="view-toggle">
+            <button class="view-btn" data-view="inStore" onclick="setInvView('inStore')">In Store</button>
+            <button class="view-btn active" data-view="available" onclick="setInvView('available')">In Sales</button>
+            <button class="view-btn" data-view="onDisplay" onclick="setInvView('onDisplay')">On Display</button>
+        </div>
+    </div>
+
+    <div id="reader"></div>
+
+    <div id="content"></div>
+
+    <footer id="scan-footer">
+        <div class="footer-row">
+            <button id="btn-camera" onclick="toggleCamera()">📷 Camera</button>
+            <button id="btn-manual" onclick="openManualModal()">✏️ Manual</button>
+            <button id="btn-export" onclick="exportCSV()">📥 Export</button>
+        </div>
+        <button id="btn-sync" onclick="syncActiveTab()">🚀 Sync</button>
+    </footer>
+
+    <nav id="bottom-nav">
+        <button class="nav-btn active" data-section="scan" onclick="switchSection('scan')"><span class="ic">📷</span>Scan</button>
+        <button class="nav-btn" data-section="inventory" onclick="switchSection('inventory')"><span class="ic">🗂️</span>Inventory</button>
+    </nav>
+
+    <!-- Manual / Scope modal -->
+    <div id="picker-modal" class="modal-overlay">
+        <div class="modal">
+            <button class="modal-close" onclick="closePicker()">✕</button>
+            <div class="modal-header" id="picker-title">Manual Add</div>
+            <div class="modal-content">
+                <div class="form-group">
+                    <label>Search / Barcode</label>
+                    <input type="text" id="picker-search" placeholder="Filter by name (regex) or enter barcode…"
+                           oninput="onPickerSearch()" onkeydown="onPickerSearchKey(event)"
+                           autocomplete="off" autocorrect="off" spellcheck="false">
+                </div>
+                <div class="form-group">
+                    <label>Product Name</label>
+                    <select id="name-select" onchange="onNameSelected()"><option value="">— Choose Product —</option></select>
+                </div>
+                <div class="form-group">
+                    <label>Color</label>
+                    <select id="color-select" onchange="onColorSelected()"><option value="">— Any Color —</option></select>
+                </div>
+                <div class="form-group">
+                    <label>Size</label>
+                    <select id="size-select" onchange="onSizeSelected()"><option value="">— Any Size —</option></select>
+                </div>
+                <div class="form-group" id="sku-group">
+                    <label>SKU</label>
+                    <select id="sku-select" onchange="onSkuSelected()"><option value="">— Choose SKU —</option></select>
+                </div>
+                <div id="preview" class="preview hidden"></div>
+                <div class="qty-control" id="qty-control">
+                    <button class="qty-btn minus" onclick="changeQty(-1)">−</button>
+                    <div class="qty-num" id="qty-num">1</div>
+                    <button class="qty-btn" onclick="changeQty(1)">+</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-grey" onclick="closePicker()">Cancel</button>
+                <button class="btn-primary" id="picker-confirm" onclick="confirmPicker()">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Variance modal -->
+    <div id="variance-modal" class="modal-overlay">
+        <div class="modal">
+            <button class="modal-close" onclick="closeModal('variance-modal')">✕</button>
+            <div class="modal-header">📦 Count Applied</div>
+            <div class="modal-content" id="variance-body"></div>
+            <div class="modal-footer">
+                <button class="btn-primary" onclick="closeModal('variance-modal')">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm modal -->
+    <div id="confirm-modal" class="modal-overlay">
+        <div class="modal" style="max-width:380px">
+            <div class="modal-header" id="confirm-title">Are you sure?</div>
+            <div class="modal-content" id="confirm-body" style="font-size:.95rem;color:var(--muted)"></div>
+            <div class="modal-footer">
+                <button class="btn-grey" id="confirm-no">Cancel</button>
+                <button class="btn-primary" id="confirm-yes">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Count preview modal: shows the post-apply matrix; Apply is gated behind scrolling when the list overflows -->
+    <div id="count-preview-modal" class="modal-overlay">
+        <div class="modal" style="max-width:560px">
+            <div class="modal-header" id="count-preview-title">Review count</div>
+            <div id="count-preview-summary"></div>
+            <div class="modal-content" id="count-preview-body"></div>
+            <div id="count-preview-hint"></div>
+            <div class="modal-footer">
+                <button class="btn-grey" id="count-preview-no">Cancel</button>
+                <button class="btn-primary" id="count-preview-yes">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toasts"></div>
+    <input type="text" id="bt-trap" autofocus inputmode="none">
+
+    <script>
+        /* ================= CONFIG ================= */
+        const BASE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub';
+        const ITEMS_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=0&single=true&output=csv`;
+        // On Netlify: same-origin proxy function. On localhost (dev server OR Live Server):
+        // talk to the local dev proxy (node dev-server.js). Override with window.RAVII_DEV_API.
+        const API_URL = (function () {
+            const h = location.hostname;
+            if (h === 'localhost' || h === '127.0.0.1') return window.RAVII_DEV_API || 'http://localhost:8787/api';
+            return '/.netlify/functions/api';
+        })();
+
+        /* ================= STATE ================= */
+        let productDB = {};   // barcode -> {name, sku, color, size}
+        let itemsData = [];   // raw catalog rows
+        let html5QrcodeScanner = null, isCameraRunning = false;
+        let btBuffer = "", btTimeout = null;
+        let pickerQty = 1, pickerSku = "", pendingScopeScan = null;
+
+        let state = {
+            section: 'scan',
+            scanSubTab: 'addDeduct',
+            addDeductDirection: 'add',
+            markShowDirection: 'show',
+            stockCountKind: 'full',
+            partialScope: { selectors: [] },
+            expandedGroups: new Set(),
+            buckets: { addDeduct: {}, stockCount: {}, markShow: {} },
+            inventory: null,
+            invView: 'available',
+            showEmpty: false,
+            pickerPurpose: 'add'
+        };
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playBeep() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+        }
+        function playErrorBuzz() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const t = audioCtx.currentTime;
+            // Three harsh descending buzzes
+            [0, 0.18, 0.36].forEach(offset => {
+                const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.frequency.setValueAtTime(220, t + offset);
+                osc.frequency.exponentialRampToValueAtTime(80, t + offset + 0.15);
+                gain.gain.setValueAtTime(0.6, t + offset);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + offset + 0.15);
+                osc.start(t + offset); osc.stop(t + offset + 0.15);
+            });
+        }
+
+        /* ================= UTIL ================= */
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+                ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+        function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+        function getVal(obj, key) {
+            if (!obj) return '';
+            const k = Object.keys(obj).find(x => x.trim().toLowerCase() === key.trim().toLowerCase());
+            return k ? String(obj[k]).trim() : '';
+        }
+
+        function toast(msg, type) {
+            const el = document.createElement('div');
+            el.className = 'toast' + (type ? ' ' + type : '');
+            el.textContent = msg;
+            document.getElementById('toasts').appendChild(el);
+            setTimeout(() => el.remove(), 2600);
+        }
+
+        // Soft grey notice that gently fades in and back out (e.g. tapping an unavailable cell).
+        function mutedToast(msg) {
+            const el = document.createElement('div');
+            el.className = 'toast muted';
+            el.textContent = msg;
+            document.getElementById('toasts').appendChild(el);
+            setTimeout(() => el.classList.add('fade-out'), 1300);
+            setTimeout(() => el.remove(), 1750);
+        }
+
+        let confirmResolver = null;
+        function customConfirm(title, body, yesText, noText) {
+            return new Promise(resolve => {
+                confirmResolver = resolve;
+                document.getElementById('confirm-title').textContent = title;
+                document.getElementById('confirm-body').textContent = body || '';
+                document.getElementById('confirm-yes').textContent = yesText || 'Confirm';
+                document.getElementById('confirm-no').textContent = noText || 'Cancel';
+                document.getElementById('confirm-modal').classList.add('active');
+            });
+        }
+        document.getElementById('confirm-yes').onclick = () => { document.getElementById('confirm-modal').classList.remove('active'); if (confirmResolver) confirmResolver(true); };
+        document.getElementById('confirm-no').onclick = () => { document.getElementById('confirm-modal').classList.remove('active'); if (confirmResolver) confirmResolver(false); };
+
+        /* ===== Count preview (scroll-gated matrix shown before a stock count is applied) ===== */
+        let countPreviewResolver = null;
+        let countPreviewScrollHandler = null;
+
+        // Build the post-apply matrix cards for a set of in-scope inventory items.
+        // inScope: array of inventory items {s,n,c,z,inStore,onDisplay}. scannedMap: Map(sku -> counted qty).
+        function buildCountPreviewHtml(inScope, scannedMap) {
+            const byName = {};
+            inScope.forEach(it => { (byName[it.n] = byName[it.n] || []).push(it); });
+            return Object.keys(byName).sort()
+                .map(name => renderCountPreviewCard(name, byName[name], scannedMap))
+                .join('');
+        }
+
+        function renderCountPreviewCard(name, prodItems, scannedMap) {
+            const colors = [...new Set(prodItems.map(i => i.c).filter(Boolean))];
+            let sizes = [...new Set(prodItems.map(i => i.z).filter(Boolean))];
+            sizes.sort((a, b) => { const ia = SIZE_ORDER.indexOf(a), ib = SIZE_ORDER.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
+
+            let willZeroCount = 0;
+            let table = `<table class="matrix"><tr><th>Size</th>${colors.map(c => `<th>${esc(c)}</th>`).join('')}</tr>`;
+            sizes.forEach(sz => {
+                table += `<tr><th>${esc(sz)}</th>`;
+                colors.forEach(c => {
+                    const it = prodItems.find(i => i.c === c && i.z === sz);
+                    if (!it) { table += `<td class="zero">·</td>`; return; }
+                    const oldV = it.inStore || 0;
+                    const scanned = scannedMap.has(it.s);
+                    const newV = scanned ? scannedMap.get(it.s) : 0;
+                    const willZero = oldV > 0 && newV === 0;
+                    const changed = newV !== oldV;
+                    if (willZero) willZeroCount++;
+                    const cls = willZero ? 'willzero' : (scanned && changed ? 'live' : (newV === 0 ? 'zero' : ''));
+                    table += `<td class="cell ${cls}">${newV}${changed ? `<div class="wasn">was ${oldV}</div>` : ''}</td>`;
+                });
+                table += `</tr>`;
+            });
+            table += `</table>`;
+
+            return `
+                <div class="product">
+                    <div class="product-head">
+                        <div>
+                            <div class="product-title">${esc(name)}</div>
+                            <div class="product-meta">${prodItems.length} variants${willZeroCount ? ` · ⚠️ ${willZeroCount} will zero` : ''}</div>
+                        </div>
+                    </div>
+                    <div class="matrix-wrap">${table}</div>
+                </div>`;
+        }
+
+        // Show the preview modal and resolve true/false. When the body overflows, Apply stays disabled
+        // until the user scrolls to the bottom — so a long blast radius can't be rubber-stamped.
+        function confirmCountPreview(opts) {
+            return new Promise(resolve => {
+                countPreviewResolver = resolve;
+                const body = document.getElementById('count-preview-body');
+                const yes = document.getElementById('count-preview-yes');
+                const hint = document.getElementById('count-preview-hint');
+                document.getElementById('count-preview-title').textContent = opts.title || 'Review count';
+                document.getElementById('count-preview-summary').textContent = opts.summary || '';
+                yes.textContent = opts.applyLabel || 'Apply';
+                body.innerHTML = opts.productsHtml || '<p style="color:var(--muted)">No in-scope items.</p>';
+
+                // detach any stale handler from a prior open
+                if (countPreviewScrollHandler) { body.removeEventListener('scroll', countPreviewScrollHandler); countPreviewScrollHandler = null; }
+                body.scrollTop = 0;
+                document.getElementById('count-preview-modal').classList.add('active');
+
+                // measure after layout
+                const overflow = body.scrollHeight > body.clientHeight + 4;
+                if (!overflow) {
+                    yes.removeAttribute('disabled');
+                    hint.textContent = '';
+                } else {
+                    yes.setAttribute('disabled', 'disabled');
+                    hint.textContent = '↓ Scroll to the bottom to review all items';
+                    countPreviewScrollHandler = () => {
+                        if (body.scrollTop + body.clientHeight >= body.scrollHeight - 24) {
+                            yes.removeAttribute('disabled');
+                            hint.textContent = '';
+                            body.removeEventListener('scroll', countPreviewScrollHandler);
+                            countPreviewScrollHandler = null;
+                        }
+                    };
+                    body.addEventListener('scroll', countPreviewScrollHandler);
+                }
+            });
+        }
+        function closeCountPreview(result) {
+            const body = document.getElementById('count-preview-body');
+            if (countPreviewScrollHandler) { body.removeEventListener('scroll', countPreviewScrollHandler); countPreviewScrollHandler = null; }
+            document.getElementById('count-preview-modal').classList.remove('active');
+            if (countPreviewResolver) { countPreviewResolver(result); countPreviewResolver = null; }
+        }
+        document.getElementById('count-preview-yes').onclick = () => closeCountPreview(true);
+        document.getElementById('count-preview-no').onclick = () => closeCountPreview(false);
+
+        /* ================= API ================= */
+        async function apiCall(opts) {
+            for (let attempt = 0; attempt < 3; attempt++) {
+                let res, json;
+                try {
+                    res = await fetch(opts.url, opts.init);
+                    json = await res.json();
+                } catch (e) {
+                    throw new Error('Network error — check connection.');
+                }
+                if (json && json.ok) return json.data;
+                if (json && json.code === 'BUSY' && attempt < 2) { await new Promise(r => setTimeout(r, 700 * (attempt + 1))); continue; }
+                throw new Error((json && json.error) || 'Request failed');
+            }
+        }
+        function apiGet(action, params) {
+            const qs = new URLSearchParams(Object.assign({ action }, params || {})).toString();
+            return apiCall({ url: `${API_URL}?${qs}`, init: { method: 'GET' } });
+        }
+        function apiPost(action, payload) {
+            return apiCall({ url: API_URL, init: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ action, sessionId: genId() }, payload)) } });
+        }
+
+        /* ================= INIT ================= */
+        window.onload = function () {
+            loadCatalog();
+            document.addEventListener('keydown', handleBluetoothInput);
+            document.addEventListener('click', (e) => {
+                if (document.querySelector('.modal-overlay.active')) return;
+                if (['BUTTON', 'SELECT', 'OPTION', 'INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+                document.getElementById('bt-trap').focus();
+            });
+            document.getElementById('content').addEventListener('click', onContentClick);
+            switchSection('scan');
+            switchScanSubTab('addDeduct');
+        };
+
+        function loadCatalog() {
+            Papa.parse(ITEMS_SHEET_URL, {
+                download: true, header: true, skipEmptyLines: true,
+                complete: (results) => {
+                    itemsData = results.data;
+                    productDB = {};
+                    results.data.forEach(row => {
+                        const barcode = getVal(row, 'Product Variant ID');
+                        if (barcode) productDB[barcode] = {
+                            name: getVal(row, 'Name') || 'Unknown',
+                            sku: getVal(row, 'SKU') || 'N/A',
+                            color: getVal(row, 'Detail1'),
+                            size: getVal(row, 'Detail2')
+                        };
+                    });
+                    document.getElementById('status').innerText = `${Object.keys(productDB).length} variants loaded`;
+                    populateNameDropdown();
+                },
+                error: () => { document.getElementById('status').innerText = "❌ Catalog load error"; }
+            });
+        }
+
+        /* ================= NAVIGATION ================= */
+        function switchSection(section) {
+            state.section = section;
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.section === section));
+            const isScan = section === 'scan';
+            document.getElementById('scan-tabs').classList.toggle('hidden', !isScan);
+            document.getElementById('scan-controls').classList.toggle('hidden', !isScan);
+            document.getElementById('summary-bar').classList.toggle('hidden', !isScan);
+            document.getElementById('scan-footer').classList.toggle('hidden', !isScan);
+            document.getElementById('inv-bar').style.display = isScan ? 'none' : 'block';
+            if (isScan) { renderScanControls(); renderScanList(); }
+            else { loadInventory(); }
+        }
+
+        function switchScanSubTab(sub) {
+            state.scanSubTab = sub;
+            document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.sub === sub));
+            renderScanControls();
+            updateSyncButton();
+            renderScanList();
+            if (sub === 'markShow') ensureInventoryLoaded(); // needed to validate "in inventory" at scan time
+        }
+
+        function renderScanControls() {
+            const c = document.getElementById('scan-controls');
+            if (state.scanSubTab === 'addDeduct') {
+                c.innerHTML = `
+                    <div class="direction-toggle">
+                        <button class="dir-btn add ${state.addDeductDirection === 'add' ? 'active' : ''}" onclick="setDirection('add')">➕ Add Stock</button>
+                        <button class="dir-btn deduct ${state.addDeductDirection === 'deduct' ? 'active' : ''}" onclick="setDirection('deduct')">➖ Deduct Stock</button>
+                    </div>`;
+            } else if (state.scanSubTab === 'stockCount') {
+                c.innerHTML = `
+                    <div class="kind-toggle">
+                        <button class="kind-btn ${state.stockCountKind === 'full' ? 'active' : ''}" onclick="setCountKind('full')">🌐 Full Count</button>
+                        <button class="kind-btn ${state.stockCountKind === 'partial' ? 'active' : ''}" onclick="setCountKind('partial')">🎯 Partial Count</button>
+                    </div>
+                    <div id="partial-scope" class="${state.stockCountKind === 'partial' ? '' : 'hidden'}">
+                        <div class="scope-head">
+                            <span>Count scope ${state.partialScope.selectors.length ? '(' + state.partialScope.selectors.length + ')' : ''}</span>
+                            <button class="add-scope-btn" onclick="openScopePicker()">+ Add scope</button>
+                        </div>
+                        <div class="scope-chips" id="scope-chips"></div>
+                    </div>`;
+                renderScopeChips();
+            } else {
+                c.innerHTML = `
+                    <div class="direction-toggle">
+                        <button class="dir-btn show ${state.markShowDirection === 'show' ? 'active' : ''}" onclick="setShowDirection('show')">⭐ Show</button>
+                        <button class="dir-btn unshow ${state.markShowDirection === 'unshow' ? 'active' : ''}" onclick="setShowDirection('unshow')">✖️ Unshow</button>
+                    </div>
+                    <div class="scope-empty" style="margin-top:10px">${state.markShowDirection === 'unshow'
+                        ? 'Scan items to take them off display. Each scan removes 1 from On Display.'
+                        : 'Scan items to mark them on-display. Each scan adds 1 to On Display.'}</div>`;
+            }
+        }
+
+        function setDirection(dir) { state.addDeductDirection = dir; renderScanControls(); updateSyncButton(); }
+        function setShowDirection(dir) { state.markShowDirection = dir; renderScanControls(); updateSyncButton(); }
+        function setCountKind(kind) { state.stockCountKind = kind; renderScanControls(); updateSyncButton(); }
+
+        function updateSyncButton() {
+            const btn = document.getElementById('btn-sync');
+            const map = {
+                addDeduct: state.addDeductDirection === 'add'
+                    ? { t: '🚀 Sync — Add Stock', c: 'var(--add)' }
+                    : { t: '🚀 Sync — Deduct Stock', c: 'var(--deduct)' },
+                stockCount: state.stockCountKind === 'partial'
+                    ? { t: '🚀 Apply Partial Count', c: 'var(--count)' }
+                    : { t: '🚀 Apply Full Count', c: 'var(--count)' },
+                markShow: state.markShowDirection === 'unshow'
+                    ? { t: '🚀 Sync — Unshow Items', c: 'var(--deduct)' }
+                    : { t: '🚀 Sync — Show Items', c: 'var(--show)' }
+            };
+            const m = map[state.scanSubTab];
+            btn.innerText = m.t; btn.style.background = m.c;
+        }
+
+        /* ================= SCOPE (partial) ================= */
+        function renderScopeChips() {
+            const wrap = document.getElementById('scope-chips');
+            if (!wrap) return;
+            if (!state.partialScope.selectors.length) { wrap.innerHTML = `<span class="scope-empty">No scope yet — add at least one.</span>`; return; }
+            wrap.innerHTML = state.partialScope.selectors.map((s, i) => {
+                const label = s.sku ? s.sku : [s.name, s.color, s.size].filter(Boolean).join(' / ');
+                return `<span class="chip">${esc(label)}<button onclick="removeScope(${i})">✕</button></span>`;
+            }).join('');
+        }
+        function removeScope(i) { state.partialScope.selectors.splice(i, 1); renderScanControls(); }
+
+        function isInScope(item) {
+            const norm = s => String(s || '').trim().toLowerCase();
+            return state.partialScope.selectors.some(s => {
+                if (s.sku) return s.sku === item.sku;
+                if (s.name && norm(s.name) !== norm(item.name)) return false;
+                if (s.color && norm(s.color) !== norm(item.color)) return false;
+                if (s.size && norm(s.size) !== norm(item.size)) return false;
+                return !!(s.name || s.color || s.size);
+            });
+        }
+
+        /* ================= SCANNING ================= */
+        function activeBucket() { return state.buckets[state.scanSubTab]; }
+
+        function handleScan(barcode) {
+            barcode = barcode.trim();
+            const product = productDB[barcode];
+            if (!product) { toast('Not found: ' + barcode, 'error'); return; }
+            if (addToCount(product, 1)) playBeep();
+        }
+
+        // Single entry point for adding to a scan list (scan AND manual). In a PARTIAL stock count
+        // it enforces the scope: out-of-scope items trigger the prompt instead of being added.
+        // Returns true if added, false if it was blocked/prompted.
+        function addToCount(product, qty) {
+            if (state.scanSubTab === 'stockCount' && state.stockCountKind === 'partial' && !isInScope(product)) {
+                outOfScopePrompt(product, qty || 1);
+                return false;
+            }
+            if (state.scanSubTab === 'markShow') {
+                const inv = state.inventory;
+                if (inv) {
+                    const invItem = inventoryItem(product);
+                    if (!invItem) { notInInventoryPrompt(product); return false; }   // no row at all
+                    if (state.markShowDirection === 'unshow') {
+                        // Nothing on display → nothing to take down.
+                        if ((invItem.onDisplay || 0) <= 0) { notOnDisplayPrompt(product); return false; }
+                    } else {
+                        // Can't put on display what isn't physically in store.
+                        if ((invItem.inStore || 0) <= 0) { outOfStockPrompt(product); return false; }
+                    }
+                } else {
+                    ensureInventoryLoaded(); // not loaded yet — sync's `missing` is the backstop
+                }
+            }
+            addToBucket(product, qty || 1);
+            return true;
+        }
+
+        // markShow only works on rows that exist in the Inventory sheet (On Display is a column there).
+        function inventoryItem(product) {
+            if (!state.inventory) return null;
+            const sku = String(product.sku || '').trim();
+            return state.inventory.items.find(it => it.s === sku) || null;
+        }
+
+        async function notInInventoryPrompt(product) {
+            playErrorBuzz();
+            toast('🚫 Not in inventory', 'error');
+            const detail = [product.color, product.size].filter(Boolean).join(' / ');
+            const go = await customConfirm(
+                '🚫 Not in inventory',
+                `"${product.name}${detail ? ' (' + detail + ')' : ''}" — SKU ${product.sku} — isn't in your Inventory yet, so On Display can't be set for it. Add it as a row in the Inventory sheet first (Name, SKU, Brand, Color, Size, In Store), then come back and scan it again.`,
+                'View Inventory', 'Dismiss'
+            );
+            if (go) { document.getElementById('inv-search').value = product.name || ''; switchSection('inventory'); }
+        }
+
+        async function outOfStockPrompt(product) {
+            playErrorBuzz();
+            toast('🚫 Out of stock', 'error');
+            const detail = [product.color, product.size].filter(Boolean).join(' / ');
+            const go = await customConfirm(
+                '🚫 Out of stock',
+                `"${product.name}${detail ? ' (' + detail + ')' : ''}" — SKU ${product.sku} — has 0 in store, so it can't be put on display. Add stock first (± Add/Deduct, or the Inventory sheet), then scan it again.`,
+                'View Inventory', 'Dismiss'
+            );
+            if (go) { document.getElementById('inv-search').value = product.name || ''; setInvView('inStore'); switchSection('inventory'); }
+        }
+
+        async function notOnDisplayPrompt(product) {
+            playErrorBuzz();
+            toast('🚫 Not on display', 'error');
+            const detail = [product.color, product.size].filter(Boolean).join(' / ');
+            const go = await customConfirm(
+                '🚫 Nothing to unshow',
+                `"${product.name}${detail ? ' (' + detail + ')' : ''}" — SKU ${product.sku} — isn't on display right now, so there's nothing to unshow. Switch to ⭐ Show if you meant to put it on display.`,
+                'View Inventory', 'Dismiss'
+            );
+            if (go) { document.getElementById('inv-search').value = product.name || ''; setInvView('onDisplay'); switchSection('inventory'); }
+        }
+
+        // Out-of-scope item during a partial count: error + choose to add a scope (cascade prefilled
+        // to this item, SKU as default) or skip it.
+        async function outOfScopePrompt(product, qty) {
+            playErrorBuzz();
+            toast('⛔ Out of count scope', 'error');
+            const detail = [product.color, product.size].filter(Boolean).join(' / ');
+            const ok = await customConfirm(
+                '⛔ Not in count scope',
+                `"${product.name}${detail ? ' (' + detail + ')' : ''}" isn't part of this partial count. Add a scope for it, or skip it?`,
+                'Add a scope', "Don't include"
+            );
+            if (ok) openScopePickerForItem(product, qty || 1);
+        }
+
+        function openScopePickerForItem(product, qty) {
+            openPicker('scope');
+            pendingScopeScan = { product: product, qty: qty || 1 }; // re-added once the scope is confirmed
+            document.getElementById('name-select').value = product.name; onNameSelected();
+            if (product.color) { document.getElementById('color-select').value = product.color; onColorSelected(); }
+            if (product.size) { document.getElementById('size-select').value = product.size; onSizeSelected(); }
+            document.getElementById('sku-select').value = product.sku; onSkuSelected();
+        }
+
+        function addToBucket(product, qty) {
+            const bucket = activeBucket();
+            const sku = product.sku;
+            if (bucket[sku]) { bucket[sku].count += qty; bucket[sku].timestamp = Date.now(); }
+            else { bucket[sku] = { count: qty, data: product, timestamp: Date.now() }; }
+            renderScanList();
+        }
+
+        function inlineInc(sku) { const b = activeBucket(); if (b[sku]) { b[sku].count++; b[sku].timestamp = Date.now(); renderScanList(); playBeep(); } }
+        async function inlineDec(sku) {
+            const b = activeBucket();
+            if (!b[sku]) return;
+            if (b[sku].count > 1) { b[sku].count--; b[sku].timestamp = Date.now(); renderScanList(); playBeep(); }
+            else if (await customConfirm('Remove item?', `Remove "${b[sku].data.name}" from the list?`, 'Remove')) { delete b[sku]; renderScanList(); }
+        }
+        async function inlineCancel(sku) {
+            const b = activeBucket();
+            if (b[sku] && await customConfirm('Remove item?', `Remove "${b[sku].data.name}" entirely?`, 'Remove')) { delete b[sku]; renderScanList(); }
+        }
+        function toggleGroup(name) { if (state.expandedGroups.has(name)) state.expandedGroups.delete(name); else state.expandedGroups.add(name); renderScanList(); }
+
+        /* ================= SCAN LIST (aggregated by name) ================= */
+        function renderScanList() {
+            if (state.section !== 'scan') return;
+            const content = document.getElementById('content');
+            const bucket = activeBucket();
+            const entries = Object.values(bucket);
+
+            document.getElementById('unique-count').innerText = entries.length;
+            document.getElementById('total-count').innerText = entries.reduce((s, i) => s + i.count, 0);
+
+            if (!entries.length) {
+                content.innerHTML = `<div class="empty-state"><div class="big">🪄</div><div class="t">Ready to scan</div><div>Use your Bluetooth scanner or the camera.</div></div>`;
+                return;
+            }
+
+            // group by name
+            const groups = {};
+            entries.forEach(e => {
+                const n = e.data.name || 'Unknown';
+                if (!groups[n]) groups[n] = { name: n, total: 0, latest: 0, items: [] };
+                groups[n].total += e.count;
+                groups[n].latest = Math.max(groups[n].latest, e.timestamp);
+                groups[n].items.push(e);
+            });
+            const sorted = Object.values(groups).sort((a, b) => b.latest - a.latest);
+            const sub = state.scanSubTab;
+
+            content.innerHTML = sorted.map(g => {
+                const open = state.expandedGroups.has(g.name);
+                const children = g.items.sort((a, b) => b.timestamp - a.timestamp).map(it => `
+                    <div class="child">
+                        <div class="child-info">
+                            <div class="child-variant">${esc([it.data.color, it.data.size].filter(Boolean).join(' / ') || '—')}</div>
+                            <div class="child-sku">${esc(it.data.sku)}</div>
+                        </div>
+                        <div class="child-controls">
+                            <button class="ctl cancel" data-action="cancel" data-sku="${esc(it.data.sku)}">✕</button>
+                            <button class="ctl minus" data-action="dec" data-sku="${esc(it.data.sku)}">−</button>
+                            <div class="child-count">${it.count}</div>
+                            <button class="ctl plus" data-action="inc" data-sku="${esc(it.data.sku)}">+</button>
+                        </div>
+                    </div>`).join('');
+                return `
+                    <div class="group ${sub} ${open ? 'open' : ''}">
+                        <div class="group-head" data-action="toggle-group" data-name="${esc(g.name)}">
+                            <span class="chevron">▶</span>
+                            <div style="flex-grow:1">
+                                <div class="group-name">${esc(g.name)}</div>
+                                <div class="group-sub">${g.items.length} SKU${g.items.length > 1 ? 's' : ''} · tap to ${open ? 'collapse' : 'expand'}</div>
+                            </div>
+                            <div class="group-qty">${g.total}</div>
+                        </div>
+                        <div class="group-children">${children}</div>
+                    </div>`;
+            }).join('');
+        }
+
+        function onContentClick(e) {
+            const t = e.target.closest('[data-action]');
+            if (!t) return;
+            const a = t.dataset.action, sku = t.dataset.sku, name = t.dataset.name;
+            if (a === 'toggle-group') toggleGroup(name);
+            else if (a === 'inc') inlineInc(sku);
+            else if (a === 'dec') inlineDec(sku);
+            else if (a === 'cancel') inlineCancel(sku);
+            else if (a === 'show-cell') toggleShowCell(sku);
+            else if (a === 'toggle-empty') { state.showEmpty = !state.showEmpty; renderInventory(); }
+        }
+
+        /* ================= SYNC ================= */
+        async function syncActiveTab() {
+            const bucket = activeBucket();
+            const entries = Object.values(bucket);
+            if (!entries.length && state.scanSubTab !== 'stockCount') return toast('Nothing to sync', 'warn');
+
+            const items = entries.map(e => ({ sku: e.data.sku, count: e.count }));
+            const btn = document.getElementById('btn-sync');
+            const original = btn.innerText;
+            btn.disabled = true; btn.innerText = '⌛ Working…';
+
+            try {
+                if (state.scanSubTab === 'addDeduct') {
+                    if (!await customConfirm('Sync stock?', `${state.addDeductDirection === 'add' ? 'Add' : 'Deduct'} ${items.length} product(s) to inventory?`, 'Sync')) throw 'cancel';
+                    const d = await apiPost('applyAddDeduct', { direction: state.addDeductDirection, items });
+                    toast(`✅ ${d.updated} updated${d.missing && d.missing.length ? ' · ' + d.missing.length + ' not found' : ''}`, 'success');
+                    clearBucketAfterSync();
+                } else if (state.scanSubTab === 'markShow') {
+                    const dir = state.markShowDirection;
+                    const d = await apiPost('applyShowMarks', { direction: dir, items });
+                    const verb = dir === 'unshow' ? 'removed from display' : 'marked on display';
+                    const miss = d.missing && d.missing.length ? ` · ${d.missing.length} not in inventory` : '';
+                    toast(`⭐ ${d.updated} ${verb}${miss}`, 'success');
+                    clearBucketAfterSync();
+                } else if (state.scanSubTab === 'stockCount') {
+                    if (state.stockCountKind === 'partial') {
+                        if (!state.partialScope.selectors.length) throw new Error('Add a count scope first.');
+                        // Guard: an empty scan sets EVERY in-scope SKU to 0 — the bug that silently wiped stock.
+                        if (items.length === 0) throw new Error('No items scanned. This would set EVERY in-scope SKU to 0. Scan items first.');
+                        // Show the post-apply matrix of the scope and require the user to review it before applying.
+                        const scannedMap = new Map(items.map(i => [i.sku, i.count]));
+                        const inv = await ensureInventoryLoaded();
+                        if (inv && inv.items) {
+                            const inScope = inv.items.filter(it => isInScope({ sku: it.s, name: it.n, color: it.c, size: it.z }));
+                            const willZero = inScope.filter(it => !scannedMap.has(it.s) && (it.inStore || 0) > 0);
+                            const summary = `${items.length} scanned · ${inScope.length} in scope · ⚠️ ${willZero.length} in-scope item(s) holding stock will be SET TO 0.`;
+                            if (!await confirmCountPreview({ title: 'Apply partial count?', applyLabel: 'Apply', summary, productsHtml: buildCountPreviewHtml(inScope, scannedMap) })) throw 'cancel';
+                        } else {
+                            // Inventory couldn't load — fall back to the text confirm so a hiccup can't hard-block applying.
+                            if (!await customConfirm('Apply partial count?', `${items.length} scanned. In-scope items you did NOT scan will be set to 0.`, 'Apply')) throw 'cancel';
+                        }
+                        const d = await apiPost('applyStockCountPartial', { scope: { selectors: state.partialScope.selectors }, items });
+                        showVariance(d.variance, true);
+                        clearBucketAfterSync(true);
+                        state.partialScope.selectors = []; // clear scope so a second Sync can't re-run over it (empty -> zero)
+                        renderScanControls();
+                    } else {
+                        // Full count = the whole store is in scope. Show every product's post-apply value and gate Apply behind scrolling.
+                        const scannedMap = new Map(items.map(i => [i.sku, i.count]));
+                        const inv = await ensureInventoryLoaded();
+                        if (inv && inv.items) {
+                            const willZero = inv.items.filter(it => !scannedMap.has(it.s) && (it.inStore || 0) > 0);
+                            const summary = `${items.length} scanned · ${inv.items.length} in store · ⚠️ ${willZero.length} item(s) holding stock will be SET TO 0. This recounts the whole store.`;
+                            if (!await confirmCountPreview({ title: 'Apply FULL count?', applyLabel: 'Apply Full', summary, productsHtml: buildCountPreviewHtml(inv.items, scannedMap) })) throw 'cancel';
+                        } else {
+                            if (!await customConfirm('Apply FULL count?', 'Every SKU not scanned will be set to 0. This recounts the whole store.', 'Apply Full')) throw 'cancel';
+                        }
+                        const d = await apiPost('applyStockCountFull', { items });
+                        showVariance(d.variance, true);
+                        clearBucketAfterSync(true);
+                    }
+                }
+                state.inventory = null; // invalidate cache
+            } catch (err) {
+                if (err !== 'cancel') toast('❌ ' + (err.message || err), 'error');
+            } finally {
+                btn.disabled = false; btn.innerText = original; updateSyncButton();
+            }
+        }
+
+        async function clearBucketAfterSync(force) {
+            if (force || await customConfirm('Clear list?', 'Clear the scanned list for this tab?', 'Clear')) {
+                state.buckets[state.scanSubTab] = {};
+                state.expandedGroups.clear();
+                renderScanList();
+            }
+        }
+
+        function showVariance(v, _applied) {
+            const body = document.getElementById('variance-body');
+            const rows = (arr, cls, sign) => arr.slice(0, 50).map(x =>
+                `<div class="var-row"><span class="sku">${esc(x.sku)}</span><span class="var-pill ${cls}">${x.was} → ${x.now != null ? x.now : 0} (${sign}${Math.abs((x.now != null ? x.now : 0) - x.was)})</span></div>`).join('');
+            body.innerHTML = `
+                <div class="var-summary">
+                    <div class="stat"><div class="num">${v.inScope}</div><div class="lbl">In scope</div></div>
+                    <div class="stat"><div class="num">${v.counted}</div><div class="lbl">Counted</div></div>
+                    <div class="stat"><div class="num">${v.totalDelta > 0 ? '+' : ''}${v.totalDelta}</div><div class="lbl">Net change</div></div>
+                </div>
+                ${v.increased.length ? `<h4 style="margin:10px 0 4px">▲ Increased (${v.increased.length})</h4>${rows(v.increased, 'up', '+')}` : ''}
+                ${v.decreased.length ? `<h4 style="margin:10px 0 4px">▼ Decreased (${v.decreased.length})</h4>${rows(v.decreased, 'down', '-')}` : ''}
+                ${v.zeroed.length ? `<h4 style="margin:10px 0 4px">⛔ Zeroed (${v.zeroed.length})</h4>${v.zeroed.slice(0, 50).map(x => `<div class="var-row"><span class="sku">${esc(x.sku)}</span><span class="var-pill down">${x.was} → 0</span></div>`).join('')}` : ''}
+                ${(!v.increased.length && !v.decreased.length && !v.zeroed.length) ? '<p style="color:var(--muted)">No changes — counts matched the system. ✅</p>' : ''}`;
+            document.getElementById('variance-modal').classList.add('active');
+        }
+
+        /* ================= MANUAL / SCOPE PICKER ================= */
+        function openManualModal() { openPicker('add'); }
+        function openScopePicker() { openPicker('scope'); }
+
+        function openPicker(purpose) {
+            state.pickerPurpose = purpose;
+            pickerQty = 1; pickerSku = "";
+            document.getElementById('qty-num').innerText = '1';
+            document.getElementById('picker-search').value = '';
+            populateNameDropdown();
+            clearChildren('color-select'); clearChildren('size-select');
+            populateAllSkus();
+            document.getElementById('preview').classList.add('hidden');
+            const isScope = purpose === 'scope';
+            document.getElementById('picker-title').innerText = isScope ? 'Add to count scope' : `Manual ${state.scanSubTab === 'markShow' ? (state.markShowDirection === 'unshow' ? 'Unshow' : 'Mark Show') : (state.addDeductDirection === 'deduct' && state.scanSubTab === 'addDeduct' ? 'Deduct' : 'Add')}`;
+            document.getElementById('picker-confirm').innerText = isScope ? 'Add scope' : 'Add';
+            document.getElementById('qty-control').classList.toggle('hidden', isScope);
+            document.getElementById('sku-group').classList.toggle('hidden', false);
+            document.getElementById('picker-modal').classList.add('active');
+        }
+        function closePicker() { pendingScopeScan = null; document.getElementById('picker-modal').classList.remove('active'); setTimeout(() => document.getElementById('bt-trap').focus(), 150); }
+        function changeQty(d) { pickerQty = Math.max(1, pickerQty + d); document.getElementById('qty-num').innerText = pickerQty; }
+
+        function confirmPicker() {
+            if (state.pickerPurpose === 'scope') {
+                const name = document.getElementById('name-select').value;
+                const color = document.getElementById('color-select').value;
+                const size = document.getElementById('size-select').value;
+                const sku = document.getElementById('sku-select').value;
+                if (!name && !sku) return toast('Pick a product (or a SKU)', 'warn');
+                const pend = pendingScopeScan; // captured before closePicker clears it
+                state.partialScope.selectors.push({ name, color, size, sku });
+                closePicker(); renderScanControls();
+                toast('Added to scope', 'success');
+                if (pend && isInScope(pend.product)) { addToBucket(pend.product, pend.qty); playBeep(); }
+            } else {
+                if (!pickerSku) return toast('Pick a SKU', 'warn');
+                const item = itemsData.find(r => getVal(r, 'SKU') === pickerSku);
+                const product = { name: getVal(item, 'Name'), sku: pickerSku, color: getVal(item, 'Detail1'), size: getVal(item, 'Detail2') };
+                const qty = pickerQty;
+                closePicker(); // close the picker first so the out-of-scope dialog (if any) isn't stacked
+                if (addToCount(product, qty)) playBeep();
+            }
+        }
+
+        /* ---- picker search / barcode entry ---- */
+        function onPickerSearch() {
+            const raw = document.getElementById('picker-search').value.trim();
+            clearChildren('color-select'); clearChildren('size-select');
+            pickerSku = ''; document.getElementById('preview').classList.add('hidden');
+            if (!raw) { populateNameDropdown(); populateAllSkus(); return; }
+
+            let re;
+            try { re = new RegExp(raw, 'i'); } catch { re = null; }
+
+            const nameSel = document.getElementById('name-select');
+            clearChildren('name-select');
+            const seen = new Set(), names = [];
+            [...itemsData].reverse().forEach(it => {
+                const n = getVal(it, 'Name');
+                if (n && !seen.has(n)) { seen.add(n); if (!re || re.test(n)) names.push(n); }
+            });
+            names.forEach(n => addOpt(nameSel, n));
+
+            const filtered = itemsData.filter(it => !re || re.test(getVal(it, 'Name')));
+            if (names.length === 1) { nameSel.value = names[0]; onNameSelected(); }
+            else { updateSkuList(filtered); }
+        }
+
+        function onPickerSearchKey(e) {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            const raw = document.getElementById('picker-search').value.trim();
+            if (!raw) return;
+            const product = productDB[raw];
+            if (!product) return;
+            document.getElementById('picker-search').value = '';
+            populateNameDropdown();
+            clearChildren('color-select'); clearChildren('size-select');
+            document.getElementById('name-select').value = product.name; onNameSelected();
+            if (product.color) { document.getElementById('color-select').value = product.color; onColorSelected(); }
+            if (product.size) { document.getElementById('size-select').value = product.size; onSizeSelected(); }
+            document.getElementById('sku-select').value = product.sku; onSkuSelected();
+            playBeep();
+        }
+
+        /* ---- cascading dropdowns (reused) ---- */
+        function clearChildren(id) { const s = document.getElementById(id); while (s.children.length > 1) s.removeChild(s.lastChild); }
+        function addOpt(sel, val) { const o = document.createElement('option'); o.value = val; o.textContent = val; sel.appendChild(o); }
+
+        function populateNameDropdown() {
+            const sel = document.getElementById('name-select'); clearChildren('name-select');
+            const seen = new Set();
+            [...itemsData].reverse().forEach(it => { const n = getVal(it, 'Name'); if (n && !seen.has(n)) { seen.add(n); addOpt(sel, n); } });
+        }
+        function populateAllSkus() {
+            const sel = document.getElementById('sku-select'); clearChildren('sku-select');
+            const seen = new Set();
+            [...itemsData].reverse().forEach(it => { const s = getVal(it, 'SKU'); if (s && !seen.has(s)) { seen.add(s); addOpt(sel, s); } });
+        }
+        function updateSkuList(list) {
+            const sel = document.getElementById('sku-select'); const cur = sel.value; clearChildren('sku-select');
+            const seen = new Set();
+            [...list].reverse().forEach(it => { const s = getVal(it, 'SKU'); if (s && !seen.has(s)) { seen.add(s); addOpt(sel, s); } });
+            sel.value = seen.has(cur) ? cur : '';
+        }
+        function onNameSelected() {
+            const name = document.getElementById('name-select').value;
+            clearChildren('color-select'); clearChildren('size-select'); pickerSku = ''; document.getElementById('preview').classList.add('hidden');
+            if (!name) { populateAllSkus(); return; }
+            const byName = itemsData.filter(it => getVal(it, 'Name') === name);
+            const seen = new Set();
+            byName.forEach(it => { const c = getVal(it, 'Detail1'); if (c && !seen.has(c)) { seen.add(c); addOpt(document.getElementById('color-select'), c); } });
+            updateSkuList(byName);
+        }
+        function onColorSelected() {
+            const name = document.getElementById('name-select').value, color = document.getElementById('color-select').value;
+            clearChildren('size-select'); pickerSku = ''; document.getElementById('preview').classList.add('hidden');
+            if (!color) { updateSkuList(itemsData.filter(it => getVal(it, 'Name') === name)); return; }
+            const byColor = itemsData.filter(it => getVal(it, 'Name') === name && getVal(it, 'Detail1') === color);
+            const seen = new Set();
+            byColor.forEach(it => { const s = getVal(it, 'Detail2'); if (s && !seen.has(s)) { seen.add(s); addOpt(document.getElementById('size-select'), s); } });
+            updateSkuList(byColor);
+        }
+        function onSizeSelected() {
+            const name = document.getElementById('name-select').value, color = document.getElementById('color-select').value, size = document.getElementById('size-select').value;
+            pickerSku = ''; document.getElementById('preview').classList.add('hidden');
+            const filtered = itemsData.filter(it => getVal(it, 'Name') === name && getVal(it, 'Detail1') === color && (!size || getVal(it, 'Detail2') === size));
+            updateSkuList(filtered);
+            const sel = document.getElementById('sku-select');
+            if (size && sel.children.length === 2) { sel.selectedIndex = 1; onSkuSelected(); }
+        }
+        function onSkuSelected() {
+            const sku = document.getElementById('sku-select').value;
+            const prev = document.getElementById('preview');
+            if (!sku) { pickerSku = ''; prev.classList.add('hidden'); return; }
+            pickerSku = sku;
+            const item = itemsData.find(r => getVal(r, 'SKU') === sku);
+            if (!item) { prev.classList.add('hidden'); return; }
+            const name = getVal(item, 'Name'), color = getVal(item, 'Detail1'), size = getVal(item, 'Detail2');
+            const detail = [color, size].filter(Boolean).join(' / ');
+            prev.innerText = detail ? `${name} (${detail})` : name;
+            prev.classList.remove('hidden');
+        }
+
+        /* ================= INVENTORY ================= */
+        // Loads inventory into state without touching the UI (used by markShow scan validation).
+        // De-dupes concurrent calls and self-heals after a sync invalidates the cache.
+        let inventoryLoading = null;
+        function ensureInventoryLoaded() {
+            if (state.inventory) return Promise.resolve(state.inventory);
+            if (inventoryLoading) return inventoryLoading;
+            inventoryLoading = apiGet('getInventory')
+                .then(inv => { state.inventory = inv; return inv; })
+                .catch(() => null)
+                .finally(() => { inventoryLoading = null; });
+            return inventoryLoading;
+        }
+
+        async function loadInventory() {
+            const content = document.getElementById('content');
+            if (state.inventory) { renderInventory(); return; }
+            content.innerHTML = `<div class="empty-state"><div class="big">⏳</div><div class="t">Loading inventory…</div></div>`;
+            try {
+                const inv = await ensureInventoryLoaded();
+                if (!inv) throw new Error('Request failed');
+                renderInventory();
+            } catch (e) {
+                content.innerHTML = `<div class="empty-state"><div class="big">⚠️</div><div class="t">Couldn't load inventory</div><div>${esc(e.message)}</div></div>`;
+            }
+        }
+        function setInvView(v) {
+            state.invView = v;
+            document.querySelectorAll('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+            renderInventory();
+        }
+        function viewValue(it) {
+            if (state.invView === 'inStore') return it.inStore;
+            if (state.invView === 'onDisplay') return it.onDisplay;
+            return Math.max(0, it.inStore - it.onDisplay);
+        }
+        const SIZE_ORDER = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL"];
+
+        function renderInventory() {
+            if (!state.inventory) return;
+            const content = document.getElementById('content');
+            const q = (document.getElementById('inv-search').value || '').trim().toLowerCase();
+            const items = state.inventory.items.filter(it => !q || it.n.toLowerCase().includes(q) || it.s.toLowerCase().includes(q));
+            const images = state.inventory.images || {};
+
+            // group brand -> name -> items
+            const brands = {};
+            items.forEach(it => {
+                const b = it.b || 'Other';
+                if (!brands[b]) brands[b] = {};
+                if (!brands[b][it.n]) brands[b][it.n] = [];
+                brands[b][it.n].push(it);
+            });
+            const brandNames = Object.keys(brands).sort();
+            if (!brandNames.length) { content.innerHTML = `<div class="empty-state"><div class="big">🔍</div><div class="t">No products</div></div>`; return; }
+
+            // In-stock products (any In Store) shown up top; out-of-stock tucked into an expandable section.
+            let mainHtml = '';
+            const emptyCards = [];
+            brandNames.forEach(brand => {
+                let brandHtml = '';
+                Object.keys(brands[brand]).sort().forEach(name => {
+                    const prodItems = brands[brand][name];
+                    const inStock = prodItems.reduce((s, i) => s + i.inStore, 0) > 0;
+                    const card = renderProductCard(name, prodItems, images);
+                    if (inStock) brandHtml += card;
+                    else emptyCards.push(card);
+                });
+                if (brandHtml) mainHtml += `<div class="brand-label">${esc(brand)}</div>` + brandHtml;
+            });
+
+            let html = mainHtml || `<div class="empty-state"><div class="big">📦</div><div class="t">Nothing in stock${q ? ' matches that' : ''}</div></div>`;
+            if (emptyCards.length) {
+                html += `<div class="empty-section">
+                    <button class="empty-toggle" data-action="toggle-empty">${state.showEmpty ? '▾ Hide' : '▸ Show'} out of stock · ${emptyCards.length} product${emptyCards.length > 1 ? 's' : ''}</button>
+                    ${state.showEmpty ? `<div class="empty-list">${emptyCards.join('')}</div>` : ''}
+                </div>`;
+            }
+            content.innerHTML = html;
+        }
+
+        function renderProductCard(name, prodItems, images) {
+            const colors = [...new Set(prodItems.map(i => i.c).filter(Boolean))];
+            let sizes = [...new Set(prodItems.map(i => i.z).filter(Boolean))];
+            sizes.sort((a, b) => { const ia = SIZE_ORDER.indexOf(a), ib = SIZE_ORDER.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
+            const imgId = images[name.trim().toLowerCase()];
+            const imgHtml = imgId
+                ? `<img class="product-img" loading="lazy" src="https://lh3.googleusercontent.com/d/${esc(imgId)}=w200" onerror="this.onerror=null;this.src='https://drive.google.com/uc?export=view&id=${esc(imgId)}'">`
+                : `<div class="product-img noimg">No img</div>`;
+            const total = prodItems.reduce((s, i) => s + viewValue(i), 0);
+
+            let table = `<table class="matrix"><tr><th>Size</th>${colors.map(c => `<th>${esc(c)}</th>`).join('')}</tr>`;
+            sizes.forEach(sz => {
+                table += `<tr><th>${esc(sz)}</th>`;
+                colors.forEach(c => {
+                    const it = prodItems.find(i => i.c === c && i.z === sz);
+                    if (!it) { table += `<td class="zero">·</td>`; return; }
+                    const val = viewValue(it);
+                    const on = it.onDisplay > 0;
+                    table += `<td class="cell ${val === 0 ? 'zero' : 'live'} ${on ? 'on' : ''}" data-action="show-cell" data-sku="${esc(it.s)}" title="Tap to toggle On Display">${val}${on ? '<div class="star">★' + it.onDisplay + '</div>' : ''}</td>`;
+                });
+                table += `</tr>`;
+            });
+            table += `</table>`;
+
+            return `
+                <div class="product">
+                    <div class="product-head">
+                        ${imgHtml}
+                        <div>
+                            <div class="product-title">${esc(name)}</div>
+                            <div class="product-meta">${prodItems.length} variants · ${total} ${labelForView()}</div>
+                        </div>
+                    </div>
+                    <div class="matrix-wrap">${table}</div>
+                </div>`;
+        }
+        function labelForView() { return state.invView === 'inStore' ? 'in store' : state.invView === 'onDisplay' ? 'on display' : 'in sales'; }
+
+        async function toggleShowCell(sku) {
+            const it = state.inventory.items.find(i => i.s === sku);
+            if (!it) return;
+            // Can't display what isn't in store — no toggle, no highlight, just a gentle notice.
+            if ((it.inStore || 0) <= 0) { mutedToast('Item is not available'); return; }
+            const next = it.onDisplay > 0 ? 0 : 1;
+            const prev = it.onDisplay;
+            it.onDisplay = next; renderInventory(); // optimistic
+            try {
+                await apiPost('setShowFlag', { sku, onDisplay: next });
+                toast(next ? `⭐ ${sku} on display` : `Removed from display`, 'success');
+            } catch (e) {
+                it.onDisplay = prev; renderInventory();
+                toast('❌ ' + e.message, 'error');
+            }
+        }
+
+        /* ================= INPUT DEVICES ================= */
+        function handleBluetoothInput(e) {
+            if (e.target.id !== 'bt-trap' && e.target.tagName === 'INPUT') return;
+            if (document.querySelector('.modal-overlay.active')) return;
+            if (e.key === 'Enter') { if (btBuffer.length) { handleScan(btBuffer); btBuffer = ''; } }
+            else if (e.key.length === 1) { btBuffer += e.key; }
+            clearTimeout(btTimeout); btTimeout = setTimeout(() => { btBuffer = ''; }, 200);
+        }
+
+        function toggleCamera() {
+            const btn = document.getElementById('btn-camera');
+            if (isCameraRunning) {
+                html5QrcodeScanner.stop().then(() => { document.getElementById('reader').style.display = 'none'; btn.innerText = '📷 Camera'; btn.classList.remove('stop-mode'); isCameraRunning = false; });
+            } else {
+                document.getElementById('reader').style.display = 'block';
+                btn.innerText = '■ Stop'; btn.classList.add('stop-mode');
+                html5QrcodeScanner = new Html5Qrcode('reader');
+                html5QrcodeScanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 250 }, (text) => {
+                    handleScan(text); html5QrcodeScanner.pause();
+                    setTimeout(() => { if (isCameraRunning) html5QrcodeScanner.resume(); }, 1200);
+                }).then(() => isCameraRunning = true).catch(() => { toast('Camera unavailable', 'error'); document.getElementById('reader').style.display = 'none'; btn.innerText = '📷 Camera'; btn.classList.remove('stop-mode'); });
+            }
+        }
+
+        function exportCSV() {
+            const items = Object.values(activeBucket());
+            if (!items.length) return toast('Nothing to export', 'warn');
+            const csv = 'SKU,Name,Color,Size,Count\n' + items.map(i => `${i.data.sku},"${i.data.name}",${i.data.color || ''},${i.data.size || ''},${i.count}`).join('\n');
+            const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+            const a = document.createElement('a'); a.href = url; a.download = `${state.scanSubTab}_${Date.now()}.csv`; a.click();
+        }
+
+        function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+    </script>
+</body>
+</html>

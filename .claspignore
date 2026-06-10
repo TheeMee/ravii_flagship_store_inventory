@@ -1,0 +1,11 @@
+# Files that should never be pushed to the Apps Script project
+.DS_Store
+**/.DS_Store
+.git/**
+claude.md
+*.md
+node_modules/**
+deploy/**
+dev-server.js
+.clasp.json
+.claspignore

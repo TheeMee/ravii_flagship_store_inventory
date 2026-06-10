@@ -1,0 +1,20 @@
+# Netlify config for the RAVii inventory app (drag-and-drop deploy of this folder).
+# The function in netlify/functions proxies the browser to Apps Script and adds CORS.
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# Optional pretty path: /api -> the proxy function
+[[redirects]]
+  from = "/api"
+  to = "/.netlify/functions/api"
+  status = 200
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
