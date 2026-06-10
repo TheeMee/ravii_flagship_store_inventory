@@ -541,6 +541,58 @@
                 </div>`;
         }
 
+        // Build the post-apply matrix for Add/Deduct. Unlike a count, the scanned qty is ADDED to (or
+        // DEDUCTED from) the existing in-store value, and only scanned products are shown.
+        // invItems: full inventory array. scannedMap: Map(sku -> scanned qty). direction: 'add' | 'deduct'.
+        function buildDeltaPreviewHtml(invItems, scannedMap, direction) {
+            const names = new Set();
+            invItems.forEach(it => { if (scannedMap.has(it.s)) names.add(it.n); });
+            const affected = invItems.filter(it => names.has(it.n));
+            const byName = {};
+            affected.forEach(it => { (byName[it.n] = byName[it.n] || []).push(it); });
+            return Object.keys(byName).sort()
+                .map(name => renderDeltaPreviewCard(name, byName[name], scannedMap, direction))
+                .join('');
+        }
+
+        function renderDeltaPreviewCard(name, prodItems, scannedMap, direction) {
+            const colors = [...new Set(prodItems.map(i => i.c).filter(Boolean))];
+            let sizes = [...new Set(prodItems.map(i => i.z).filter(Boolean))];
+            sizes.sort((a, b) => { const ia = SIZE_ORDER.indexOf(a), ib = SIZE_ORDER.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
+
+            let willZeroCount = 0;
+            let table = `<table class="matrix"><tr><th>Size</th>${colors.map(c => `<th>${esc(c)}</th>`).join('')}</tr>`;
+            sizes.forEach(sz => {
+                table += `<tr><th>${esc(sz)}</th>`;
+                colors.forEach(c => {
+                    const it = prodItems.find(i => i.c === c && i.z === sz);
+                    if (!it) { table += `<td class="zero">·</td>`; return; }
+                    const oldV = it.inStore || 0;
+                    const scanned = scannedMap.has(it.s);
+                    const qty = scanned ? scannedMap.get(it.s) : 0;
+                    const newV = direction === 'add' ? oldV + qty : Math.max(0, oldV - qty);
+                    const changed = scanned && qty !== 0;
+                    const willZero = direction === 'deduct' && oldV > 0 && newV === 0;
+                    if (willZero) willZeroCount++;
+                    const cls = willZero ? 'willzero' : (changed ? 'live' : (newV === 0 ? 'zero' : ''));
+                    table += `<td class="cell ${cls}">${newV}${changed ? `<div class="wasn">was ${oldV}</div>` : ''}</td>`;
+                });
+                table += `</tr>`;
+            });
+            table += `</table>`;
+
+            return `
+                <div class="product">
+                    <div class="product-head">
+                        <div>
+                            <div class="product-title">${esc(name)}</div>
+                            <div class="product-meta">${prodItems.length} variants${willZeroCount ? ` · ⚠️ ${willZeroCount} will zero` : ''}</div>
+                        </div>
+                    </div>
+                    <div class="matrix-wrap">${table}</div>
+                </div>`;
+        }
+
         // Show the preview modal and resolve true/false. When the body overflows, Apply stays disabled
         // until the user scrolls to the bottom — so a long blast radius can't be rubber-stamped.
         function confirmCountPreview(opts) {
@@ -955,8 +1007,22 @@
 
             try {
                 if (state.scanSubTab === 'addDeduct') {
-                    if (!await customConfirm('Sync stock?', `${state.addDeductDirection === 'add' ? 'Add' : 'Deduct'} ${items.length} product(s) to inventory?`, 'Sync')) throw 'cancel';
-                    const d = await apiPost('applyAddDeduct', { direction: state.addDeductDirection, items });
+                    // Show the post-apply matrix (scanned qty added to / deducted from current stock) before applying.
+                    const dir = state.addDeductDirection;
+                    const scannedMap = new Map(items.map(i => [i.sku, i.count]));
+                    const inv = await ensureInventoryLoaded();
+                    if (inv && inv.items) {
+                        const willZero = dir === 'deduct'
+                            ? inv.items.filter(it => scannedMap.has(it.s) && (it.inStore || 0) > 0 && (it.inStore || 0) - scannedMap.get(it.s) <= 0).length
+                            : 0;
+                        const verb = dir === 'add' ? 'added to' : 'deducted from';
+                        const summary = `${items.length} product(s) will be ${verb} inventory.${willZero ? ` ⚠️ ${willZero} item(s) will reach 0.` : ''}`;
+                        if (!await confirmCountPreview({ title: dir === 'add' ? 'Add stock?' : 'Deduct stock?', applyLabel: dir === 'add' ? 'Add' : 'Deduct', summary, productsHtml: buildDeltaPreviewHtml(inv.items, scannedMap, dir) })) throw 'cancel';
+                    } else {
+                        // Inventory couldn't load — fall back to the text confirm so a hiccup can't hard-block applying.
+                        if (!await customConfirm('Sync stock?', `${dir === 'add' ? 'Add' : 'Deduct'} ${items.length} product(s) to inventory?`, 'Sync')) throw 'cancel';
+                    }
+                    const d = await apiPost('applyAddDeduct', { direction: dir, items });
                     toast(`✅ ${d.updated} updated${d.missing && d.missing.length ? ' · ' + d.missing.length + ' not found' : ''}`, 'success');
                     clearBucketAfterSync();
                 } else if (state.scanSubTab === 'markShow') {
