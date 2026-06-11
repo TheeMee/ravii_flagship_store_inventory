@@ -228,6 +228,23 @@
         .btn-primary { background: var(--add); color: #fff; }
         .btn-grey { background: #ddd2c9; color: var(--ink); }
 
+        /* ---- Custom product picker (image + name; native <select> can't hold images) ---- */
+        .np { position: relative; }
+        .np-trigger { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 11px; background: #fff; font-size: 1rem; font-family: inherit; cursor: pointer; text-align: left; }
+        .np-thumb { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; background: #f3ebe4; flex-shrink: 0; display: none; }
+        .np-thumb.show { display: block; }
+        .np-label { flex-grow: 1; min-width: 0; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .np-label.placeholder { color: var(--muted); }
+        .np-chev { color: var(--muted); font-size: 0.8rem; flex-shrink: 0; }
+        .np-panel { margin-top: 6px; max-height: 260px; overflow-y: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: var(--shadow); }
+        .np-item { display: flex; align-items: center; gap: 10px; padding: 8px 11px; cursor: pointer; border-bottom: 1px solid var(--line); }
+        .np-item:last-child { border-bottom: none; }
+        .np-item:active { background: #faf3fc; }
+        .np-item-thumb { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: #f3ebe4; flex-shrink: 0; }
+        .np-item-thumb.noimg { display: flex; align-items: center; justify-content: center; font-size: 0.55rem; color: var(--muted); text-align: center; }
+        .np-item-name { font-size: 0.92rem; font-weight: 600; color: var(--ink); }
+        .np-empty { padding: 14px; text-align: center; color: var(--muted); font-size: 0.85rem; }
+
         /* variance list */
         .var-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
         .var-row .sku { font-family: ui-monospace, monospace; font-size: 0.78rem; }
@@ -318,7 +335,14 @@
                 </div>
                 <div class="form-group">
                     <label>Product Name</label>
-                    <select id="name-select" onchange="onNameSelected()"><option value="">— Choose Product —</option></select>
+                    <div class="np" id="name-picker">
+                        <button type="button" class="np-trigger" id="name-trigger" onclick="toggleNamePanel()">
+                            <img class="np-thumb" id="name-trigger-thumb" alt="">
+                            <span class="np-label placeholder" id="name-trigger-label">— Choose Product —</span>
+                            <span class="np-chev">▾</span>
+                        </button>
+                        <div class="np-panel hidden" id="name-panel"></div>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>Color</label>
@@ -402,9 +426,11 @@
         /* ================= STATE ================= */
         let productDB = {};   // barcode -> {name, sku, color, size}
         let itemsData = [];   // raw catalog rows
+        let NAME_LABELS = {};   // col-C "Name" -> cleaned display label (derived from col-D "Listing Title Name")
         let html5QrcodeScanner = null, isCameraRunning = false;
         let btBuffer = "", btTimeout = null;
         let pickerQty = 1, pickerSku = "", pendingScopeScan = null;
+        let pickerName = "";   // selected product key (Items col-C "Name"); drives the custom thumbnail picker
 
         let state = {
             section: 'scan',
@@ -490,6 +516,43 @@
         document.getElementById('confirm-yes').onclick = () => { document.getElementById('confirm-modal').classList.remove('active'); if (confirmResolver) confirmResolver(true); };
         document.getElementById('confirm-no').onclick = () => { document.getElementById('confirm-modal').classList.remove('active'); if (confirmResolver) confirmResolver(false); };
 
+        // Of the partial-count scopes, find the ones where NOTHING was scanned but stock exists —
+        // applying would set every item in that scope to 0. inScope: matching inventory items. scannedMap: Map(sku->qty).
+        function emptyScopesAfterScan(selectors, inScope, scannedMap) {
+            const norm = s => String(s || '').trim().toLowerCase();
+            const matches = (sel, it) => {
+                if (sel.sku) return sel.sku === it.s;
+                if (sel.name && norm(sel.name) !== norm(it.n)) return false;
+                if (sel.color && norm(sel.color) !== norm(it.c)) return false;
+                if (sel.size && norm(sel.size) !== norm(it.z)) return false;
+                return !!(sel.name || sel.color || sel.size);
+            };
+            return selectors.filter(sel => {
+                const items = inScope.filter(it => matches(sel, it));
+                if (!items.length) return false;                       // scope matches nothing in store — skip
+                if (items.some(it => scannedMap.has(it.s))) return false; // something scanned here — not empty
+                return items.some(it => (it.inStore || 0) > 0);        // nothing scanned + holds stock => wiped to 0
+            });
+        }
+
+        // Per-the-request final gate: list every scope that will be zeroed and force an explicit accept.
+        // Reuses the confirm-modal + confirmResolver wiring (same yes/no handlers as customConfirm).
+        function confirmEmptyScopes(emptyScopes) {
+            return new Promise(resolve => {
+                confirmResolver = resolve;
+                const many = emptyScopes.length > 1;
+                const labelOf = s => s.sku ? s.sku : [s.name, s.color, s.size].filter(Boolean).join(' / ');
+                const list = emptyScopes.map(s => `<li style="margin:5px 0;font-weight:700;color:var(--ink)">${esc(labelOf(s))}</li>`).join('');
+                document.getElementById('confirm-title').textContent = '⚠️ Scope' + (many ? 's' : '') + ' going entirely empty';
+                document.getElementById('confirm-body').innerHTML =
+                    `Nothing was scanned in ${many ? 'these scopes' : 'this scope'}, so <b>every item</b> in ${many ? 'them' : 'it'} will be SET TO 0:` +
+                    `<ul style="margin:10px 0 0;padding-left:20px">${list}</ul>`;
+                document.getElementById('confirm-yes').textContent = 'I accept — submit';
+                document.getElementById('confirm-no').textContent = 'No, go back';
+                document.getElementById('confirm-modal').classList.add('active');
+            });
+        }
+
         /* ===== Count preview (scroll-gated matrix shown before a stock count is applied) ===== */
         let countPreviewResolver = null;
         let countPreviewScrollHandler = null;
@@ -533,7 +596,7 @@
                 <div class="product">
                     <div class="product-head">
                         <div>
-                            <div class="product-title">${esc(name)}</div>
+                            <div class="product-title">${esc(nameLabel(name))}</div>
                             <div class="product-meta">${prodItems.length} variants${willZeroCount ? ` · ⚠️ ${willZeroCount} will zero` : ''}</div>
                         </div>
                     </div>
@@ -585,7 +648,7 @@
                 <div class="product">
                     <div class="product-head">
                         <div>
-                            <div class="product-title">${esc(name)}</div>
+                            <div class="product-title">${esc(nameLabel(name))}</div>
                             <div class="product-meta">${prodItems.length} variants${willZeroCount ? ` · ⚠️ ${willZeroCount} will zero` : ''}</div>
                         </div>
                     </div>
@@ -693,6 +756,7 @@
                         };
                     });
                     document.getElementById('status').innerText = `${Object.keys(productDB).length} variants loaded`;
+                    buildNameLabels();
                     populateNameDropdown();
                 },
                 error: () => { document.getElementById('status').innerText = "❌ Catalog load error"; }
@@ -800,6 +864,28 @@
             });
         }
 
+        function scopeLabel(s) { return s.sku ? s.sku : [s.name, s.color, s.size].filter(Boolean).join(' / '); }
+
+        // The exact set of SKUs a single selector matches, resolved against the full catalog.
+        // Used to detect redundant scopes (one selector's items fully contained in another's).
+        function selectorSkuSet(sel) {
+            const norm = s => String(s || '').trim().toLowerCase();
+            const set = new Set();
+            itemsData.forEach(r => {
+                const sku = getVal(r, 'SKU'); if (!sku) return;
+                let ok;
+                if (sel.sku) { ok = sel.sku === sku; }
+                else {
+                    ok = !!(sel.name || sel.color || sel.size);
+                    if (ok && sel.name && norm(sel.name) !== norm(getVal(r, 'Name'))) ok = false;
+                    if (ok && sel.color && norm(sel.color) !== norm(getVal(r, 'Detail1'))) ok = false;
+                    if (ok && sel.size && norm(sel.size) !== norm(getVal(r, 'Detail2'))) ok = false;
+                }
+                if (ok) set.add(sku);
+            });
+            return set;
+        }
+
         /* ================= SCANNING ================= */
         function activeBucket() { return state.buckets[state.scanSubTab]; }
 
@@ -898,7 +984,7 @@
         function openScopePickerForItem(product, qty) {
             openPicker('scope');
             pendingScopeScan = { product: product, qty: qty || 1 }; // re-added once the scope is confirmed
-            document.getElementById('name-select').value = product.name; onNameSelected();
+            pickName(product.name);
             if (product.color) { document.getElementById('color-select').value = product.color; onColorSelected(); }
             if (product.size) { document.getElementById('size-select').value = product.size; onSizeSelected(); }
             document.getElementById('sku-select').value = product.sku; onSkuSelected();
@@ -1035,8 +1121,8 @@
                 } else if (state.scanSubTab === 'stockCount') {
                     if (state.stockCountKind === 'partial') {
                         if (!state.partialScope.selectors.length) throw new Error('Add a count scope first.');
-                        // Guard: an empty scan sets EVERY in-scope SKU to 0 — the bug that silently wiped stock.
-                        if (items.length === 0) throw new Error('No items scanned. This would set EVERY in-scope SKU to 0. Scan items first.');
+                        // An empty scan zeroes every in-scope SKU. That's allowed deliberately — guarded by the
+                        // scroll-gated preview matrix below and the explicit empty-scope accept (confirmEmptyScopes).
                         // Show the post-apply matrix of the scope and require the user to review it before applying.
                         const scannedMap = new Map(items.map(i => [i.sku, i.count]));
                         const inv = await ensureInventoryLoaded();
@@ -1045,6 +1131,9 @@
                             const willZero = inScope.filter(it => !scannedMap.has(it.s) && (it.inStore || 0) > 0);
                             const summary = `${items.length} scanned · ${inScope.length} in scope · ⚠️ ${willZero.length} in-scope item(s) holding stock will be SET TO 0.`;
                             if (!await confirmCountPreview({ title: 'Apply partial count?', applyLabel: 'Apply', summary, productsHtml: buildCountPreviewHtml(inScope, scannedMap) })) throw 'cancel';
+                            // After the matrix is reviewed, force a second explicit accept for any scope that gets fully zeroed.
+                            const emptyScopes = emptyScopesAfterScan(state.partialScope.selectors, inScope, scannedMap);
+                            if (emptyScopes.length && !await confirmEmptyScopes(emptyScopes)) throw 'cancel';
                         } else {
                             // Inventory couldn't load — fall back to the text confirm so a hiccup can't hard-block applying.
                             if (!await customConfirm('Apply partial count?', `${items.length} scanned. In-scope items you did NOT scan will be set to 0.`, 'Apply')) throw 'cancel';
@@ -1112,10 +1201,12 @@
             pickerQty = 1; pickerSku = "";
             document.getElementById('qty-num').innerText = '1';
             document.getElementById('picker-search').value = '';
-            populateNameDropdown();
+            setName(''); hideNamePanel(); renderNamePanel(null);
             clearChildren('color-select'); clearChildren('size-select');
             populateAllSkus();
             document.getElementById('preview').classList.add('hidden');
+            // Warm the inventory cache so product thumbnails are ready when the list opens.
+            ensureInventoryLoaded().then(() => { updateNameTrigger(); if (!isNamePanelHidden()) showNamePanel(); }).catch(() => {});
             const isScope = purpose === 'scope';
             document.getElementById('picker-title').innerText = isScope ? 'Add to count scope' : `Manual ${state.scanSubTab === 'markShow' ? (state.markShowDirection === 'unshow' ? 'Unshow' : 'Mark Show') : (state.addDeductDirection === 'deduct' && state.scanSubTab === 'addDeduct' ? 'Deduct' : 'Add')}`;
             document.getElementById('picker-confirm').innerText = isScope ? 'Add scope' : 'Add';
@@ -1123,18 +1214,28 @@
             document.getElementById('sku-group').classList.toggle('hidden', false);
             document.getElementById('picker-modal').classList.add('active');
         }
-        function closePicker() { pendingScopeScan = null; document.getElementById('picker-modal').classList.remove('active'); setTimeout(() => document.getElementById('bt-trap').focus(), 150); }
+        function closePicker() { pendingScopeScan = null; hideNamePanel(); document.getElementById('picker-modal').classList.remove('active'); setTimeout(() => document.getElementById('bt-trap').focus(), 150); }
         function changeQty(d) { pickerQty = Math.max(1, pickerQty + d); document.getElementById('qty-num').innerText = pickerQty; }
 
         function confirmPicker() {
             if (state.pickerPurpose === 'scope') {
-                const name = document.getElementById('name-select').value;
+                const name = getName();
                 const color = document.getElementById('color-select').value;
                 const size = document.getElementById('size-select').value;
                 const sku = document.getElementById('sku-select').value;
                 if (!name && !sku) return toast('Pick a product (or a SKU)', 'warn');
+                // Block a scope whose items are entirely contained within an existing scope (subset or exact dup).
+                const newSel = { name, color, size, sku };
+                const newSet = selectorSkuSet(newSel);
+                if (newSet.size) {
+                    const covering = state.partialScope.selectors.find(ex => {
+                        const exSet = selectorSkuSet(ex);
+                        return [...newSet].every(s => exSet.has(s));
+                    });
+                    if (covering) return toast(`⛔ Scope is redundant — already covered by "${scopeLabel(covering)}"`, 'error');
+                }
                 const pend = pendingScopeScan; // captured before closePicker clears it
-                state.partialScope.selectors.push({ name, color, size, sku });
+                state.partialScope.selectors.push(newSel);
                 closePicker(); renderScanControls();
                 toast('Added to scope', 'success');
                 if (pend && isInScope(pend.product)) { addToBucket(pend.product, pend.qty); playBeep(); }
@@ -1153,23 +1254,16 @@
             const raw = document.getElementById('picker-search').value.trim();
             clearChildren('color-select'); clearChildren('size-select');
             pickerSku = ''; document.getElementById('preview').classList.add('hidden');
-            if (!raw) { populateNameDropdown(); populateAllSkus(); return; }
 
-            let re;
-            try { re = new RegExp(raw, 'i'); } catch { re = null; }
+            let re = null;
+            if (raw) { try { re = new RegExp(raw, 'i'); } catch { re = null; } }
+            const names = renderNamePanel(re);
+            showNamePanel();
 
-            const nameSel = document.getElementById('name-select');
-            clearChildren('name-select');
-            const seen = new Set(), names = [];
-            [...itemsData].reverse().forEach(it => {
-                const n = getVal(it, 'Name');
-                if (n && !seen.has(n)) { seen.add(n); if (!re || re.test(n)) names.push(n); }
-            });
-            names.forEach(n => addOpt(nameSel, n));
-
-            const filtered = itemsData.filter(it => !re || re.test(getVal(it, 'Name')));
-            if (names.length === 1) { nameSel.value = names[0]; onNameSelected(); }
-            else { updateSkuList(filtered); }
+            if (raw && names.length === 1) { pickName(names[0].key); return; }
+            setName('');   // a live search clears any prior pick
+            const filtered = itemsData.filter(it => { const c = getVal(it, 'Name'); return !re || re.test(nameLabel(c)) || re.test(c); });
+            updateSkuList(filtered);
         }
 
         function onPickerSearchKey(e) {
@@ -1180,9 +1274,7 @@
             const product = productDB[raw];
             if (!product) return;
             document.getElementById('picker-search').value = '';
-            populateNameDropdown();
-            clearChildren('color-select'); clearChildren('size-select');
-            document.getElementById('name-select').value = product.name; onNameSelected();
+            pickName(product.name);   // sets name, cascades color/size/sku options, closes the panel
             if (product.color) { document.getElementById('color-select').value = product.color; onColorSelected(); }
             if (product.size) { document.getElementById('size-select').value = product.size; onSizeSelected(); }
             document.getElementById('sku-select').value = product.sku; onSkuSelected();
@@ -1191,26 +1283,119 @@
 
         /* ---- cascading dropdowns (reused) ---- */
         function clearChildren(id) { const s = document.getElementById(id); while (s.children.length > 1) s.removeChild(s.lastChild); }
-        function addOpt(sel, val) { const o = document.createElement('option'); o.value = val; o.textContent = val; sel.appendChild(o); }
+        function addOpt(sel, val, label) { const o = document.createElement('option'); o.value = val; o.textContent = (label != null && label !== '') ? label : val; sel.appendChild(o); }
 
-        function populateNameDropdown() {
-            const sel = document.getElementById('name-select'); clearChildren('name-select');
-            const seen = new Set();
-            [...itemsData].reverse().forEach(it => { const n = getVal(it, 'Name'); if (n && !seen.has(n)) { seen.add(n); addOpt(sel, n); } });
+        // Strip marketplace noise off a "Listing Title Name": leading [Pre-Order] tags and brand
+        // prefixes (RAVii / RAVii Essentials -, including the "Esssntials" typo), stacked or single.
+        function cleanTitle(s) {
+            s = String(s == null ? '' : s).trim();
+            let prev;
+            do {
+                prev = s;
+                s = s.replace(/^\[\s*pre[\s-]*order\s*[\]\})]\s*/i, '');   // [Pre-Order] and ]/}/) typos
+                s = s.replace(/^ravii\b[^-–]*[-–]\s*/i, '');              // RAVii / RAVii Essentials- / Esssntials- ...
+                s = s.replace(/[（(][^（()]*[)）]/g, '');                    // drop (...) notes — ASCII + fullwidth
+                s = s.replace(/^[-–]\s*/, '');                            // stray leading dash
+                s = s.replace(/\s{2,}/g, ' ').replace(/[\s,]+$/, '').trim();
+            } while (s && s !== prev);
+            return s;
         }
+
+        // One display label per product key (col C "Name"): a cleaned col-D title when it's present
+        // AND unique to that product; otherwise the raw C name. Blank titles and shared bundle titles
+        // (e.g. "Blair Top & Ballon Skirt" covering two products) can't stand in for the product, so
+        // those fall back to C. Built once after the catalog loads.
+        function buildNameLabels() {
+            const cleaned = {};
+            itemsData.forEach(it => {
+                const c = getVal(it, 'Name'); if (!c) return;
+                if (!cleaned[c]) cleaned[c] = cleanTitle(getVal(it, 'Listing Title Name')); // keep trying until non-empty
+            });
+            const count = {};
+            Object.keys(cleaned).forEach(c => { const d = cleaned[c]; if (d) count[d] = (count[d] || 0) + 1; });
+            NAME_LABELS = {};
+            Object.keys(cleaned).forEach(c => { const d = cleaned[c]; NAME_LABELS[c] = (d && count[d] === 1) ? d : c; });
+        }
+        function nameLabel(c) { return NAME_LABELS[c] || c; }
+
+        // Dropdown shows the cleaned label (nameLabel); the option VALUE stays "Name" (col C) so
+        // cascade filtering and server-side partial-count scope matching keep working.
+        /* ---- custom product picker (thumbnail + name) ---- */
+        function getName() { return pickerName; }
+        function setName(val) { pickerName = val || ''; updateNameTrigger(); }
+
+        // Image association mirrors the inventory view exactly: keyed by the product name
+        // (Items col-C "Name" == Inventory "Name"), lowercased, against the loaded image map.
+        function productImageId(key) {
+            const images = (state.inventory && state.inventory.images) || {};
+            return images[String(key || '').trim().toLowerCase()] || null;
+        }
+        function productThumbHtml(key, cls) {
+            const id = productImageId(key);
+            if (id) return `<img class="${cls}" loading="lazy" src="https://lh3.googleusercontent.com/d/${esc(id)}=w120" onerror="this.onerror=null;this.src='https://drive.google.com/uc?export=view&id=${esc(id)}'">`;
+            return `<div class="${cls} noimg">No img</div>`;
+        }
+        function updateNameTrigger() {
+            const lab = document.getElementById('name-trigger-label');
+            const thumb = document.getElementById('name-trigger-thumb');
+            if (!pickerName) {
+                lab.textContent = '— Choose Product —'; lab.classList.add('placeholder');
+                thumb.classList.remove('show'); thumb.removeAttribute('src');
+                return;
+            }
+            lab.textContent = nameLabel(pickerName); lab.classList.remove('placeholder');
+            const id = productImageId(pickerName);
+            if (id) { thumb.src = `https://lh3.googleusercontent.com/d/${esc(id)}=w120`; thumb.classList.add('show'); }
+            else { thumb.classList.remove('show'); thumb.removeAttribute('src'); }
+        }
+
+        // Build the scrollable product list (natural sheet order: top = newest, shown first).
+        // Returns the matched products so the caller can auto-pick a lone result.
+        function renderNamePanel(re) {
+            const panel = document.getElementById('name-panel');
+            const seen = new Set(), names = [];
+            itemsData.forEach(it => {
+                const n = getVal(it, 'Name');
+                if (!n || seen.has(n)) return;
+                seen.add(n);
+                const label = nameLabel(n);
+                if (re && !re.test(label) && !re.test(n)) return;
+                names.push({ key: n, label: label });
+            });
+            let html = `<div class="np-item" onclick="clearName()"><div class="np-item-thumb noimg">All</div><div class="np-item-name" style="color:var(--muted)">— Any product —</div></div>`;
+            html += names.map(x => `<div class="np-item" data-name="${esc(x.key)}" onclick="pickName(this.dataset.name)">${productThumbHtml(x.key, 'np-item-thumb')}<div class="np-item-name">${esc(x.label)}</div></div>`).join('');
+            if (!names.length) html += `<div class="np-empty">No products match</div>`;
+            panel.innerHTML = html;
+            return names;
+        }
+        function isNamePanelHidden() { return document.getElementById('name-panel').classList.contains('hidden'); }
+        function hideNamePanel() { document.getElementById('name-panel').classList.add('hidden'); }
+        function showNamePanel() {
+            const raw = (document.getElementById('picker-search').value || '').trim();
+            let re = null; if (raw) { try { re = new RegExp(raw, 'i'); } catch { re = null; } }
+            renderNamePanel(re);
+            document.getElementById('name-panel').classList.remove('hidden');
+        }
+        function toggleNamePanel() { if (isNamePanelHidden()) showNamePanel(); else hideNamePanel(); }
+        function pickName(key) { setName(key); hideNamePanel(); onNameSelected(); }
+        function clearName() { setName(''); hideNamePanel(); onNameSelected(); }
+
+        // populateNameDropdown is kept as a thin alias (called once on catalog load).
+        function populateNameDropdown() { renderNamePanel(null); }
+
         function populateAllSkus() {
             const sel = document.getElementById('sku-select'); clearChildren('sku-select');
             const seen = new Set();
-            [...itemsData].reverse().forEach(it => { const s = getVal(it, 'SKU'); if (s && !seen.has(s)) { seen.add(s); addOpt(sel, s); } });
+            itemsData.forEach(it => { const s = getVal(it, 'SKU'); if (s && !seen.has(s)) { seen.add(s); addOpt(sel, s); } });
         }
         function updateSkuList(list) {
             const sel = document.getElementById('sku-select'); const cur = sel.value; clearChildren('sku-select');
             const seen = new Set();
-            [...list].reverse().forEach(it => { const s = getVal(it, 'SKU'); if (s && !seen.has(s)) { seen.add(s); addOpt(sel, s); } });
+            list.forEach(it => { const s = getVal(it, 'SKU'); if (s && !seen.has(s)) { seen.add(s); addOpt(sel, s); } });
             sel.value = seen.has(cur) ? cur : '';
         }
         function onNameSelected() {
-            const name = document.getElementById('name-select').value;
+            const name = getName();
             clearChildren('color-select'); clearChildren('size-select'); pickerSku = ''; document.getElementById('preview').classList.add('hidden');
             if (!name) { populateAllSkus(); return; }
             const byName = itemsData.filter(it => getVal(it, 'Name') === name);
@@ -1219,7 +1404,7 @@
             updateSkuList(byName);
         }
         function onColorSelected() {
-            const name = document.getElementById('name-select').value, color = document.getElementById('color-select').value;
+            const name = getName(), color = document.getElementById('color-select').value;
             clearChildren('size-select'); pickerSku = ''; document.getElementById('preview').classList.add('hidden');
             if (!color) { updateSkuList(itemsData.filter(it => getVal(it, 'Name') === name)); return; }
             const byColor = itemsData.filter(it => getVal(it, 'Name') === name && getVal(it, 'Detail1') === color);
@@ -1228,7 +1413,7 @@
             updateSkuList(byColor);
         }
         function onSizeSelected() {
-            const name = document.getElementById('name-select').value, color = document.getElementById('color-select').value, size = document.getElementById('size-select').value;
+            const name = getName(), color = document.getElementById('color-select').value, size = document.getElementById('size-select').value;
             pickerSku = ''; document.getElementById('preview').classList.add('hidden');
             const filtered = itemsData.filter(it => getVal(it, 'Name') === name && getVal(it, 'Detail1') === color && (!size || getVal(it, 'Detail2') === size));
             updateSkuList(filtered);
@@ -1242,7 +1427,7 @@
             pickerSku = sku;
             const item = itemsData.find(r => getVal(r, 'SKU') === sku);
             if (!item) { prev.classList.add('hidden'); return; }
-            const name = getVal(item, 'Name'), color = getVal(item, 'Detail1'), size = getVal(item, 'Detail2');
+            const name = nameLabel(getVal(item, 'Name')), color = getVal(item, 'Detail1'), size = getVal(item, 'Detail2');
             const detail = [color, size].filter(Boolean).join(' / ');
             prev.innerText = detail ? `${name} (${detail})` : name;
             prev.classList.remove('hidden');
@@ -1290,7 +1475,7 @@
             if (!state.inventory) return;
             const content = document.getElementById('content');
             const q = (document.getElementById('inv-search').value || '').trim().toLowerCase();
-            const items = state.inventory.items.filter(it => !q || it.n.toLowerCase().includes(q) || it.s.toLowerCase().includes(q));
+            const items = state.inventory.items.filter(it => !q || it.n.toLowerCase().includes(q) || nameLabel(it.n).toLowerCase().includes(q) || it.s.toLowerCase().includes(q));
             const images = state.inventory.images || {};
 
             // group brand -> name -> items
@@ -1358,7 +1543,7 @@
                     <div class="product-head">
                         ${imgHtml}
                         <div>
-                            <div class="product-title">${esc(name)}</div>
+                            <div class="product-title">${esc(nameLabel(name))}</div>
                             <div class="product-meta">${prodItems.length} variants · ${total} ${labelForView()}</div>
                         </div>
                     </div>
