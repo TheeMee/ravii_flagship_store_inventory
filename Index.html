@@ -1254,13 +1254,13 @@
             pickerSku = ''; document.getElementById('preview').classList.add('hidden');
 
             let re = null;
-            if (raw) { try { re = new RegExp(raw, 'i'); } catch { re = null; } }
+            if (raw) { try { re = new RegExp(normSearch(raw), 'i'); } catch { re = null; } }
             const names = renderNamePanel(re);
             showNamePanel();
 
             if (raw && names.length === 1) { pickName(names[0].key); return; }
             setName('');   // a live search clears any prior pick
-            const filtered = itemsData.filter(it => { const c = getVal(it, 'Name'); return !re || re.test(nameLabel(c)) || re.test(c); });
+            const filtered = itemsData.filter(it => { const c = getVal(it, 'Name'); return !re || re.test(normSearch(nameLabel(c))) || re.test(normSearch(c)); });
             updateSkuList(filtered);
         }
 
@@ -1282,6 +1282,14 @@
         /* ---- cascading dropdowns (reused) ---- */
         function clearChildren(id) { const s = document.getElementById(id); while (s.children.length > 1) s.removeChild(s.lastChild); }
         function addOpt(sel, val, label) { const o = document.createElement('option'); o.value = val; o.textContent = (label != null && label !== '') ? label : val; sel.appendChild(o); }
+
+        // Fold accents and apostrophes so search ignores them on both query and data.
+        function normSearch(s) {
+            return String(s == null ? '' : s)
+                .normalize('NFD').replace(/[̀-ͯ]/g, '')  // strip accents
+                .replace(/['’ʼ`]/g, '')                            // drop apostrophes
+                .toLowerCase();
+        }
 
         // Strip marketplace noise off a "Listing Title Name": leading [Pre-Order] tags and brand
         // prefixes (RAVii / RAVii Essentials -, including the "Esssntials" typo), stacked or single.
@@ -1357,7 +1365,7 @@
                 if (!n || seen.has(n)) return;
                 seen.add(n);
                 const label = nameLabel(n);
-                if (re && !re.test(label) && !re.test(n)) return;
+                if (re && !re.test(normSearch(label)) && !re.test(normSearch(n))) return;
                 names.push({ key: n, label: label });
             });
             let html = `<div class="np-cell np-reset${pickerName === '' ? ' selected' : ''}" data-name="" onclick="clearName()"><div class="np-cell-img noimg">All</div><div class="np-cell-name">Any</div></div>`;
@@ -1488,8 +1496,8 @@
         function renderInventory() {
             if (!state.inventory) return;
             const content = document.getElementById('content');
-            const q = (document.getElementById('inv-search').value || '').trim().toLowerCase();
-            const items = state.inventory.items.filter(it => !q || it.n.toLowerCase().includes(q) || nameLabel(it.n).toLowerCase().includes(q) || it.s.toLowerCase().includes(q));
+            const q = normSearch(document.getElementById('inv-search').value);
+            const items = state.inventory.items.filter(it => !q || normSearch(it.n).includes(q) || normSearch(nameLabel(it.n)).includes(q) || normSearch(it.s).includes(q));
             const images = state.inventory.images || {};
 
             // Bucket products by subtab group (ravii / essentials / other), then by name within each.
