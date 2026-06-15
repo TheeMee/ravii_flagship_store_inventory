@@ -23,6 +23,17 @@ const CORS = {
 };
 
 exports.handler = async (event) => {
+  // Per-store display name — answered here from the STORE_NAME env var (each Netlify site sets
+  // its own), so the identical frontend titles itself "Flagship" vs "Central World". Handled
+  // before proxying so it never reaches Apps Script.
+  if (event.queryStringParameters && event.queryStringParameters.action === "__store") {
+    return {
+      statusCode: 200,
+      headers: { ...CORS, "Content-Type": "application/json" },
+      body: JSON.stringify({ ok: true, data: { name: process.env.STORE_NAME || "RAVii Stock" } }),
+    };
+  }
+
   // CORS preflight
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 204, headers: CORS, body: "" };

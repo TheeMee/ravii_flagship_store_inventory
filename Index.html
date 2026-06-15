@@ -228,21 +228,14 @@
         .btn-primary { background: var(--add); color: #fff; }
         .btn-grey { background: #ddd2c9; color: var(--ink); }
 
-        /* ---- Custom product picker (image + name; native <select> can't hold images) ---- */
-        .np { position: relative; }
-        .np-trigger { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 11px; background: #fff; font-size: 1rem; font-family: inherit; cursor: pointer; text-align: left; }
-        .np-thumb { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; background: #f3ebe4; flex-shrink: 0; display: none; }
-        .np-thumb.show { display: block; }
-        .np-label { flex-grow: 1; min-width: 0; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .np-label.placeholder { color: var(--muted); }
-        .np-chev { color: var(--muted); font-size: 0.8rem; flex-shrink: 0; }
-        .np-panel { margin-top: 6px; max-height: 260px; overflow-y: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: var(--shadow); }
-        .np-item { display: flex; align-items: center; gap: 10px; padding: 8px 11px; cursor: pointer; border-bottom: 1px solid var(--line); }
-        .np-item:last-child { border-bottom: none; }
-        .np-item:active { background: #faf3fc; }
-        .np-item-thumb { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: #f3ebe4; flex-shrink: 0; }
-        .np-item-thumb.noimg { display: flex; align-items: center; justify-content: center; font-size: 0.55rem; color: var(--muted); text-align: center; }
-        .np-item-name { font-size: 0.92rem; font-weight: 600; color: var(--ink); }
+        /* ---- Product matrix picker (scrollable 3-column grid of image + name) ---- */
+        .np-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-height: 320px; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: #faf7f3; }
+        .np-cell { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 6px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 5px; text-align: center; }
+        .np-cell:active { transform: scale(0.97); }
+        .np-cell.selected { border-color: var(--primary); box-shadow: inset 0 0 0 2px var(--primary); }
+        .np-cell-img { width: 100%; aspect-ratio: 1 / 1; border-radius: 8px; object-fit: cover; background: #f3ebe4; }
+        .np-cell-img.noimg { display: flex; align-items: center; justify-content: center; font-size: 0.6rem; color: var(--muted); }
+        .np-cell-name { font-size: 0.72rem; font-weight: 600; line-height: 1.15; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
         .np-empty { padding: 14px; text-align: center; color: var(--muted); font-size: 0.85rem; }
 
         /* variance list */
@@ -274,7 +267,7 @@
     <header>
         <span class="logo">🛍️</span>
         <div>
-            <h1>RAVii Stock</h1>
+            <h1 id="store-name">RAVii Stock</h1>
             <div id="status">Loading…</div>
         </div>
     </header>
@@ -335,14 +328,7 @@
                 </div>
                 <div class="form-group">
                     <label>Product Name</label>
-                    <div class="np" id="name-picker">
-                        <button type="button" class="np-trigger" id="name-trigger" onclick="toggleNamePanel()">
-                            <img class="np-thumb" id="name-trigger-thumb" alt="">
-                            <span class="np-label placeholder" id="name-trigger-label">— Choose Product —</span>
-                            <span class="np-chev">▾</span>
-                        </button>
-                        <div class="np-panel hidden" id="name-panel"></div>
-                    </div>
+                    <div class="np-grid" id="name-grid"></div>
                 </div>
                 <div class="form-group">
                     <label>Color</label>
@@ -415,12 +401,12 @@
         /* ================= CONFIG ================= */
         const BASE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub';
         const ITEMS_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=0&single=true&output=csv`;
-        // On Netlify: same-origin proxy function. On localhost (dev server OR Live Server):
-        // talk to the local dev proxy (node dev-server.js). Override with window.RAVII_DEV_API.
+        // In production (Cloudflare Pages or Netlify): same-origin proxy at /api. On localhost
+        // (dev server OR Live Server): the local dev proxy (node dev-server.js). Override with window.RAVII_DEV_API.
         const API_URL = (function () {
             const h = location.hostname;
             if (h === 'localhost' || h === '127.0.0.1') return window.RAVII_DEV_API || 'http://localhost:8787/api';
-            return '/.netlify/functions/api';
+            return '/api';
         })();
 
         /* ================= STATE ================= */
@@ -728,6 +714,12 @@
 
         /* ================= INIT ================= */
         window.onload = function () {
+            // Per-store identity: name comes from the proxy's STORE_NAME env var (Flagship / Central World).
+            apiGet('__store').then(d => {
+                const name = (d && d.name) || 'RAVii Stock';
+                document.title = 'RAVii — ' + name;
+                document.getElementById('store-name').textContent = name;
+            }).catch(() => {});
             loadCatalog();
             document.addEventListener('keydown', handleBluetoothInput);
             document.addEventListener('click', (e) => {
@@ -1335,24 +1327,23 @@
             if (id) return `<img class="${cls}" loading="lazy" src="https://lh3.googleusercontent.com/d/${esc(id)}=w120" onerror="this.onerror=null;this.src='https://drive.google.com/uc?export=view&id=${esc(id)}'">`;
             return `<div class="${cls} noimg">No img</div>`;
         }
+        // Reflect the current selection by highlighting its cell (no re-render → scroll preserved).
         function updateNameTrigger() {
-            const lab = document.getElementById('name-trigger-label');
-            const thumb = document.getElementById('name-trigger-thumb');
-            if (!pickerName) {
-                lab.textContent = '— Choose Product —'; lab.classList.add('placeholder');
-                thumb.classList.remove('show'); thumb.removeAttribute('src');
-                return;
-            }
-            lab.textContent = nameLabel(pickerName); lab.classList.remove('placeholder');
-            const id = productImageId(pickerName);
-            if (id) { thumb.src = `https://lh3.googleusercontent.com/d/${esc(id)}=w120`; thumb.classList.add('show'); }
-            else { thumb.classList.remove('show'); thumb.removeAttribute('src'); }
+            const grid = document.getElementById('name-grid');
+            if (!grid) return;
+            grid.querySelectorAll('.np-cell').forEach(el => el.classList.toggle('selected', el.dataset.name === pickerName));
         }
 
-        // Build the scrollable product list (natural sheet order: top = newest, shown first).
+        function currentNameFilter() {
+            const raw = (document.getElementById('picker-search').value || '').trim();
+            if (!raw) return null;
+            try { return new RegExp(raw, 'i'); } catch { return null; }
+        }
+
+        // Build the scrollable 3-column product matrix (natural sheet order: top = newest, first).
         // Returns the matched products so the caller can auto-pick a lone result.
         function renderNamePanel(re) {
-            const panel = document.getElementById('name-panel');
+            const grid = document.getElementById('name-grid');
             const seen = new Set(), names = [];
             itemsData.forEach(it => {
                 const n = getVal(it, 'Name');
@@ -1362,23 +1353,19 @@
                 if (re && !re.test(label) && !re.test(n)) return;
                 names.push({ key: n, label: label });
             });
-            let html = `<div class="np-item" onclick="clearName()"><div class="np-item-thumb noimg">All</div><div class="np-item-name" style="color:var(--muted)">— Any product —</div></div>`;
-            html += names.map(x => `<div class="np-item" data-name="${esc(x.key)}" onclick="pickName(this.dataset.name)">${productThumbHtml(x.key, 'np-item-thumb')}<div class="np-item-name">${esc(x.label)}</div></div>`).join('');
-            if (!names.length) html += `<div class="np-empty">No products match</div>`;
-            panel.innerHTML = html;
+            let html = `<div class="np-cell np-reset${pickerName === '' ? ' selected' : ''}" data-name="" onclick="clearName()"><div class="np-cell-img noimg">All</div><div class="np-cell-name">Any</div></div>`;
+            html += names.map(x => `<div class="np-cell${x.key === pickerName ? ' selected' : ''}" data-name="${esc(x.key)}" onclick="pickName(this.dataset.name)">${productThumbHtml(x.key, 'np-cell-img')}<div class="np-cell-name">${esc(x.label)}</div></div>`).join('');
+            if (!names.length) html += `<div class="np-empty" style="grid-column:1/-1">No products match</div>`;
+            grid.innerHTML = html;
             return names;
         }
-        function isNamePanelHidden() { return document.getElementById('name-panel').classList.contains('hidden'); }
-        function hideNamePanel() { document.getElementById('name-panel').classList.add('hidden'); }
-        function showNamePanel() {
-            const raw = (document.getElementById('picker-search').value || '').trim();
-            let re = null; if (raw) { try { re = new RegExp(raw, 'i'); } catch { re = null; } }
-            renderNamePanel(re);
-            document.getElementById('name-panel').classList.remove('hidden');
-        }
-        function toggleNamePanel() { if (isNamePanelHidden()) showNamePanel(); else hideNamePanel(); }
-        function pickName(key) { setName(key); hideNamePanel(); onNameSelected(); }
-        function clearName() { setName(''); hideNamePanel(); onNameSelected(); }
+        // The matrix is always visible (no collapsible panel); these keep older callers working.
+        function isNamePanelHidden() { return false; }
+        function hideNamePanel() {}
+        function showNamePanel() { renderNamePanel(currentNameFilter()); }
+        function toggleNamePanel() {}
+        function pickName(key) { setName(key); onNameSelected(); }
+        function clearName() { setName(''); onNameSelected(); }
 
         // populateNameDropdown is kept as a thin alias (called once on catalog load).
         function populateNameDropdown() { renderNamePanel(null); }

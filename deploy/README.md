@@ -2,7 +2,7 @@
 
 Two things get deployed:
 1. **Backend** (Apps Script) — `Code.js` etc., pushed with `clasp push` then **redeployed** so the live `/exec` URL serves v2.
-2. **Frontend** (this `deploy/` folder) — dragged onto Netlify. It includes the app **and** the CORS proxy function.
+2. **Frontend** (this `deploy/` folder) — hosted on **Cloudflare Pages**. It includes the app **and** the CORS proxy function (`functions/api.js`, served at `/api`).
 
 > ⚠️ The backend migration is **destructive** (it converts `HQ Inventory` from a formula to code-maintained values). **Rehearse on a copy of the spreadsheet first.** Nothing here touches the live system until you choose to deploy.
 
@@ -35,17 +35,53 @@ Then `…/exec?action=getInventory` → JSON of your stock.
 
 ---
 
-## B. Frontend — Netlify (drag-and-drop)
+## B. Frontend — Cloudflare Pages (free, deploys are NOT metered)
 
-1. Go to your Netlify site → **Deploys** → drag the **`deploy/` folder** onto the deploy area.
-   The folder already contains `index.html`, `netlify.toml`, and `netlify/functions/api.js`.
-2. **Verify the proxy works:** open `https://<your-site>/.netlify/functions/api?action=ping` → `{"ok":true,...}`.
-   - If functions don't run on a manual deploy for your account, connect the folder to a Git repo instead (Netlify will then build/bundle functions automatically). The function is dependency-free, so either path works.
-3. Open the site on your phone. The app calls `/.netlify/functions/api`, which proxies to Apps Script with CORS.
+The app is a static `index.html` plus one CORS proxy at `deploy/functions/api.js` (a Cloudflare
+Pages Function, served at `/api`). Cloudflare Pages has unlimited static bandwidth, ~100k
+function calls/day free, and **does not charge credits per deploy** (which is what drained Netlify).
 
-If you ever redeploy the Apps Script to a **new** `/exec` URL, update it in **either**:
-- `deploy/netlify/functions/api.js` (the `APPS_SCRIPT_URL` constant), or
-- Netlify → Site settings → Environment → `APPS_SCRIPT_URL` (overrides the constant).
+### Easiest: direct upload with Wrangler
+```bash
+# IMPORTANT: run from INSIDE the deploy/ folder so wrangler finds functions/ (the proxy).
+# Deploying from the repo root uploads only static files and the /api proxy silently won't work.
+# Use --branch main so the deploy is promoted to the PRODUCTION alias (…pages.dev); without it a
+# deploy can land as a preview and the live site keeps serving the old version.
+cd deploy
+npx wrangler pages deploy . --project-name ravii-store-1 --branch main --commit-dirty=true
+```
+Then in the Cloudflare dashboard: **Workers & Pages → ravii-store-1 → Settings → Variables and
+Secrets → add `APPS_SCRIPT_URL`** = that store's `/exec` URL (see "Two stores" below), and redeploy.
+
+### Or: connect the GitHub repo
+**Workers & Pages → Create → Pages → Connect to Git** → pick the repo, then set:
+- **Root directory:** `deploy`
+- **Build command:** *(leave empty — no build)*
+- **Build output directory:** `/`
+
+Cloudflare picks up `deploy/functions/api.js` automatically. With Git connected, deploys still
+don't cost credits, but you can **pause automatic deployments** in Settings → Builds & deployments
+if you only want to publish on demand.
+
+**Verify the proxy:** open `https://<your-project>.pages.dev/api?action=ping` → `{"ok":true,...}`.
+Then open the site on your phone — the app calls `/api`, which proxies to Apps Script with CORS.
+
+### Two stores — the per-store variable
+Each store is **one Cloudflare Pages project** running the same code, distinguished only by its
+`APPS_SCRIPT_URL` environment variable:
+
+| Project | `APPS_SCRIPT_URL` (Settings → Variables and Secrets) |
+|---------|------------------------------------------------------|
+| `ravii-store-1` | store 1's Apps Script `…/exec` URL |
+| `ravii-store-2` | store 2's Apps Script `…/exec` URL |
+
+The frontend calls the relative path `/api`, so it always hits *its own* project's function, which
+reads *that* project's variable. Set the variable for **Production** (and Preview if you use it),
+then redeploy. The hardcoded URL in `deploy/functions/api.js` is only a fallback when no variable
+is set. For local dev against a specific store: `APPS_SCRIPT_URL=…/exec node dev-server.js`.
+
+> The old Netlify files (`deploy/netlify.toml`, `deploy/netlify/functions/api.js`) are unused by
+> Cloudflare and can be deleted once the Cloudflare site is confirmed working.
 
 ---
 
@@ -58,5 +94,5 @@ Pick 3–5 SKUs with known starting **In Store**. Then:
 - **Concurrent add** to the same SKU from two phones → both land (lock serializes), In Store reflects the sum.
 
 ## Notes
-- `Index.html` (capital I) in the repo is the version-controlled source pushed by clasp (the Apps Script project no longer serves it — `doGet` is now the JSON API). `deploy/index.html` is the lowercase copy Netlify serves. Keep them identical.
+- `Index.html` (capital I) in the repo is the version-controlled source pushed by clasp (the Apps Script project no longer serves it — `doGet` is now the JSON API). `deploy/index.html` is the lowercase copy Cloudflare Pages serves. Keep them identical.
 - Old/cached copies of the previous app still post the legacy `{target, items}` shape; the backend's `doPost` falls through to `legacyDoPost_` so they keep working during cutover. Retire after one clean cycle.

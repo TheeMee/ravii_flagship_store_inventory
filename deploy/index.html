@@ -267,7 +267,7 @@
     <header>
         <span class="logo">🛍️</span>
         <div>
-            <h1>RAVii Stock</h1>
+            <h1 id="store-name">RAVii Stock</h1>
             <div id="status">Loading…</div>
         </div>
     </header>
@@ -401,12 +401,12 @@
         /* ================= CONFIG ================= */
         const BASE_SPREADSHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnbNhlqgTLymtrnkCqSszM2VoXS8gUnPYokaHVrh6ZUCQBcyDujLa_7d3Mug-ouZ1CGQdtO9ME1avK/pub';
         const ITEMS_SHEET_URL = `${BASE_SPREADSHEET_URL}?gid=0&single=true&output=csv`;
-        // On Netlify: same-origin proxy function. On localhost (dev server OR Live Server):
-        // talk to the local dev proxy (node dev-server.js). Override with window.RAVII_DEV_API.
+        // In production (Cloudflare Pages or Netlify): same-origin proxy at /api. On localhost
+        // (dev server OR Live Server): the local dev proxy (node dev-server.js). Override with window.RAVII_DEV_API.
         const API_URL = (function () {
             const h = location.hostname;
             if (h === 'localhost' || h === '127.0.0.1') return window.RAVII_DEV_API || 'http://localhost:8787/api';
-            return '/.netlify/functions/api';
+            return '/api';
         })();
 
         /* ================= STATE ================= */
@@ -714,6 +714,12 @@
 
         /* ================= INIT ================= */
         window.onload = function () {
+            // Per-store identity: name comes from the proxy's STORE_NAME env var (Flagship / Central World).
+            apiGet('__store').then(d => {
+                const name = (d && d.name) || 'RAVii Stock';
+                document.title = 'RAVii — ' + name;
+                document.getElementById('store-name').textContent = name;
+            }).catch(() => {});
             loadCatalog();
             document.addEventListener('keydown', handleBluetoothInput);
             document.addEventListener('click', (e) => {

@@ -39,6 +39,12 @@ const server = http.createServer(async (req, res) => {
   // ---- API proxy ----
   if (isApi(u.pathname)) {
     if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
+    // Per-store display name (parity with the deployed proxies). Preview a store locally with
+    // STORE_NAME=Flagship node dev-server.js
+    if (u.searchParams.get('action') === '__store') {
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, data: { name: process.env.STORE_NAME || 'RAVii Stock' } }));
+    }
     try {
       const isGet = req.method === 'GET';
       const target = isGet && u.search ? APPS_SCRIPT_URL + u.search : APPS_SCRIPT_URL;

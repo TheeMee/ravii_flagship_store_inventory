@@ -902,21 +902,18 @@ function applyRecoveryCorrections(opts) {
     if (diff !== 0) { deltaMap.set(sku, diff); preview.push({ sku: sku, from: cur, to: rec, delta: diff }); }
   });
   if (!deltaMap.size) return { applied: 0, note: "No corrections needed.", preview: [] };
+  // Safety: a reconstruction that lands below zero means the ledger is missing that
+  // SKU's opening balance (it was never counted into history). Writing it would set
+  // impossible negative stock. Refuse and steer to the forward-restore path instead.
+  var negatives = preview.filter(function (p) { return p.to < 0; });
+  if (negatives.length) {
+    throw mkError_("Refusing to write: reconstruction produced NEGATIVE stock for " + negatives.length +
+      " SKU(s) (e.g. " + negatives.slice(0, 5).map(function (p) { return p.sku + "=" + p.to; }).join(", ") +
+      "). Their opening balance was never logged, so a from-zero replay underflows. Use reconcilePreview()/reconcileApply() instead.", "NEGATIVE_RECON");
+  }
   var res = applyDeltas_(deltaMap, "Recovery Correction", "empty-scan zeroing recovery");
   return { applied: deltaMap.size, updated: res.updated, missing: res.missing, preview: preview };
 }
-
-/* ====================================================================
- * EDITOR-RUNNABLE RECOVERY HELPERS
- * --------------------------------------------------------------------
- * The Apps Script "Run" button can't pass arguments or print return
- * values, so these two zero-arg functions wrap the recovery tooling with
- * Logger.log output and a confirm gate. Workflow:
- *   1. Run  auditRecoveryLog()    -> read-only; review the Execution log
- *   2. Run  applyAutoRecovery()   -> dry run (CONFIRM=false) prints preview
- *   3. Set  CONFIRM=true below, Run applyAutoRecovery() again -> WRITES
- *   4. Run  auditRecoveryLog()    -> confirm corrections are gone
- * ==================================================================== */
 
 /** Logs a possibly-large array in chunks so nothing is dropped by the log viewer. */
 function logChunked_(label, arr, perChunk) {
@@ -927,54 +924,233 @@ function logChunked_(label, arr, perChunk) {
   }
 }
 
+/* ====================================================================
+ * RECONCILIATION TOOLING — repair the in-scope zeroing bug
+ * --------------------------------------------------------------------
+ * No real sales were ever recorded, so every NEGATIVE ledger movement is an
+ * artifact. Truth = what was counted in = the POSITIVE entries. These functions
+ * rebuild each bug-affected SKU's stock from its positive ledger rows, let you
+ * override the gaps (items whose opening was never logged, e.g. Blair_Maxi_Dress),
+ * then surgically DELETE the erroneous "Partial Stock Count" zeroing rows.
+ *
+ * Run from the Apps Script editor:
+ *   1. reconcilePreview()             -> writes the editable "Reconciliation" sheet
+ *   2. fill the Override column        -> for NO_POSITIVE rows and anything you know differs
+ *   3. reconcileApply({confirm:true})  -> backs up history, deletes the zeroing rows,
+ *                                         sets stock to the finals, logs adjustments
+ *
+ * Scope: only "bug-affected" SKUs = any SKU with a "Partial Stock Count" row.
+ * ==================================================================== */
+
+var RECON_SHEET_ = "Reconciliation";
+var RECON_REASON_ = "Reconciliation Adjustment";   // In-Store delta appended to keep the cleaned log consistent
+
 /**
- * READ-ONLY. Run this first. Logs the auto recovery audit: the summary, the
- * pure re-zero batches that will be backed out, every count batch (watch for
- * the "MOSTLY_ZEROING_review" flag = a mixed batch that needs your judgment),
- * and the per-SKU current -> reconstructed corrections.
+ * Build the per-SKU reconciliation model from the live ledger + Inventory (read-only).
+ * suggested = sum of positive In-Store deltas. Returns one row per affected SKU.
  */
-function auditRecoveryLog() {
-  var report = auditRecovery(); // auto mode: skips all PURE re-zero batches
-  Logger.log("=== RECOVERY AUDIT (read-only) ===");
-  Logger.log(JSON.stringify(report.summary));
-  logChunked_("SUSPECT re-zero batches (will be backed out)", report.suspectBatches, 20);
-  logChunked_("ALL count batches (review MOSTLY_ZEROING_review)", report.countBatches, 20);
-  logChunked_("Per-SKU corrections current -> reconstructed", report.skus, 40);
-  return report;
+function computeReconcile_() {
+  var rows = dumpLedger().rows;
+
+  // current HQ + display name per SKU, straight off the Inventory sheet
+  var idx = getInventoryIndex_();
+  var info = {};
+  var n0 = idx.lastRow - 1;
+  if (n0 >= 1) {
+    var block0 = idx.sheet.getRange(2, 1, n0, idx.lastCol).getValues();
+    for (var i = 0; i < n0; i++) {
+      var s0 = String(block0[i][idx.cols.sku - 1]).trim();
+      if (!s0) continue;
+      info[s0] = { name: String(block0[i][idx.cols.name - 1]).trim(), current: Number(block0[i][idx.cols.hq - 1]) || 0 };
+    }
+  }
+
+  // aggregate ledger per SKU
+  var agg = {};
+  rows.forEach(function (r) {
+    var a = agg[r.sku] || (agg[r.sku] = { posSum: 0, posPartialRows: 0, bugRowNums: [], bugDelta: 0, otherNeg: 0, hasPartial: false, hqDelta: 0 });
+    if (r.reason === "Partial Stock Count") {
+      a.hasPartial = true;
+      if (r.delta < 0) { a.bugRowNums.push(r.rowNum); a.bugDelta += r.delta; }
+      else if (r.delta > 0) a.posPartialRows++;
+    }
+    if (HQ_REASONS_[r.reason] || r.reason === RECON_REASON_) { // In-Store reasons (Show/Unshow excluded)
+      a.hqDelta += r.delta;
+      if (r.delta > 0) a.posSum += r.delta;
+      else if (r.delta < 0 && r.reason !== "Partial Stock Count") a.otherNeg += r.delta;
+    }
+  });
+
+  var out = [];
+  Object.keys(agg).forEach(function (sku) {
+    var a = agg[sku];
+    if (!a.hasPartial) return;             // affected = touched by a partial count
+    var has = !!info[sku];
+    var flags = [];
+    if (a.posSum === 0) flags.push("NO_POSITIVE");        // no positive history -> must override
+    if (a.posPartialRows > 1) flags.push("MULTI_SCAN");   // scanned more than once -> verify not doubled
+    if (a.otherNeg < 0) flags.push("OTHER_NEGATIVE");     // a non-partial negative (e.g. Deduct) kept
+    if (!has) flags.push("MISSING_SKU");                  // affected SKU not present in Inventory
+    out.push({
+      sku: sku,
+      name: has ? info[sku].name : "(not in Inventory)",
+      current: has ? info[sku].current : 0,
+      suggested: a.posSum,
+      posPartialRows: a.posPartialRows,
+      bugRowCount: a.bugRowNums.length,
+      bugRowNums: a.bugRowNums,
+      hqDelta: a.hqDelta,
+      bugDelta: a.bugDelta,
+      flag: flags.join(",")
+    });
+  });
+  out.sort(function (x, y) { return x.sku < y.sku ? -1 : (x.sku > y.sku ? 1 : 0); });
+  return out;
 }
 
 /**
- * Backs out the AUTO-detected pure re-zero batches (the mirrored +N/-N bug)
- * and restores each SKU's scanned value. Dry run by default — set CONFIRM=true
- * after reviewing auditRecoveryLog(). Does NOT touch mixed batches; if the audit
- * flagged any MOSTLY_ZEROING_review batch, handle those separately first.
+ * READ-ONLY except it (re)writes the scratch "Reconciliation" sheet. Lists every
+ * bug-affected SKU with its current stock, the suggested value (sum of positives),
+ * and flags. Fill the Override column before running reconcileApply().
  */
-function applyAutoRecovery() {
-  var CONFIRM = false; // <-- change to true ONLY after reviewing auditRecoveryLog()
+function reconcilePreview() {
+  var model = computeReconcile_();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(RECON_SHEET_) || ss.insertSheet(RECON_SHEET_);
+  sheet.clear();
 
-  var suspects = computeRecovery_(null).order
-    .filter(function (b) { return b.suspectZero; })
-    .map(function (b) { return b.tsMs; });
+  var header = ["SKU", "Name", "Current", "Suggested", "Override", "PosBatches", "BugRows", "Flag"];
+  var data = [header];
+  model.forEach(function (m) {
+    data.push([m.sku, m.name, m.current, m.suggested, "", m.posPartialRows, m.bugRowCount, m.flag]);
+  });
+  sheet.getRange(1, 1, data.length, header.length).setValues(data);
+  sheet.setFrozenRows(1);
+  sheet.getRange(1, 1, 1, header.length).setFontWeight("bold");
+  if (model.length) sheet.getRange(2, 5, model.length, 1).setBackground("#fff7e0"); // tint Override col
 
-  if (!suspects.length) {
-    Logger.log("No pure re-zero batches detected. Nothing to auto-undo. " +
-               "If stock is still wrong, the damage is in a mixed batch — run auditRecoveryLog() and inspect MOSTLY_ZEROING_review.");
-    return { applied: 0 };
+  var flagged = model.filter(function (m) { return m.flag; });
+  Logger.log("Reconciliation: " + model.length + " affected SKUs written to '" + RECON_SHEET_ + "'. " +
+             flagged.length + " need review. Fill Override (esp. NO_POSITIVE), then reconcileApply({confirm:true}).");
+  logChunked_("Flagged", flagged.map(function (m) {
+    return { sku: m.sku, current: m.current, suggested: m.suggested, flag: m.flag };
+  }), 30);
+  return { affected: model.length, flagged: flagged.length, sheet: RECON_SHEET_ };
+}
+
+/**
+ * WRITES (gated by confirm:true). Backs up the history, deletes the zeroing rows,
+ * sets stock to the finals (Override ?? Suggested) for affected SKUs, recomputes
+ * In Sales, and appends a "Reconciliation Adjustment" row wherever the cleaned log
+ * would not otherwise replay to the final value (covers overrides and gap fills).
+ */
+function reconcileApply(opts) {
+  opts = opts || {};
+  if (opts.confirm !== true) {
+    throw mkError_("Refusing to write. Review the '" + RECON_SHEET_ + "' sheet, then call reconcileApply({confirm:true}).", "NEED_CONFIRM");
   }
+  return withLock_(function () {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  if (!CONFIRM) {
-    var preview = auditRecovery({ skipBatches: suspects });
-    Logger.log("=== DRY RUN — nothing written ===");
-    Logger.log("Will back out " + suspects.length + " re-zero batch(es): " + JSON.stringify(suspects));
-    Logger.log(JSON.stringify(preview.summary));
-    logChunked_("Corrections that WOULD be applied", preview.skus, 40);
-    Logger.log("Set CONFIRM=true at the top of applyAutoRecovery() and run again to WRITE.");
-    return { dryRun: true, suspectBatches: suspects, corrections: preview.skus.length };
-  }
+    // 1. read finals from the Reconciliation sheet (Override ?? Suggested)
+    var rsheet = ss.getSheetByName(RECON_SHEET_);
+    if (!rsheet) throw mkError_("Run reconcilePreview() first — no '" + RECON_SHEET_ + "' sheet.", "NOT_FOUND");
+    var rvals = rsheet.getDataRange().getValues();
+    var rhead = rvals[0].map(function (h) { return String(h).trim(); });
+    var cSku = rhead.indexOf("SKU"), cOver = rhead.indexOf("Override"), cSug = rhead.indexOf("Suggested");
+    if (cSku < 0 || cOver < 0 || cSug < 0) throw mkError_("Reconciliation sheet missing SKU/Override/Suggested columns. Re-run reconcilePreview().", "BAD_INPUT");
+    var finalBySku = {}, hadOverride = {};
+    for (var i = 1; i < rvals.length; i++) {
+      var sku = String(rvals[i][cSku]).trim();
+      if (!sku) continue;
+      var ov = rvals[i][cOver];
+      var useOv = (ov !== "" && ov !== null && ov !== undefined && !isNaN(Number(ov)));
+      hadOverride[sku] = useOv;
+      finalBySku[sku] = useOv ? Number(ov) : (Number(rvals[i][cSug]) || 0);
+    }
 
-  var res = applyRecoveryCorrections({ skipBatches: suspects, confirm: true });
-  Logger.log("=== APPLIED ===");
-  Logger.log(JSON.stringify({ applied: res.applied, updated: res.updated, missing: res.missing }));
-  logChunked_("Corrections written (from -> to)", res.preview, 40);
+    // 2. recompute the affected model from the live ledger (bug rowNums, hq deltas)
+    var model = computeReconcile_();
+    var affected = {};
+    model.forEach(function (m) { affected[m.sku] = m; });
+
+    // 2b. SAFETY: a NO_POSITIVE SKU with no Override would be set to 0 — the very zeroing
+    // we're repairing. Refuse unless explicitly allowed, so gap items (e.g. Blair_Maxi_Dress)
+    // can't be silently wiped by an unfilled sheet.
+    var willZero = model.filter(function (m) {
+      return m.suggested === 0 && !hadOverride[m.sku];
+    }).map(function (m) { return m.sku; });
+    if (willZero.length && opts.allowZero !== true) {
+      throw mkError_(willZero.length + " affected SKU(s) have no positive history AND no Override, so they would be set to 0 (e.g. " +
+        willZero.slice(0, 6).join(", ") + "). Fill their Override in the '" + RECON_SHEET_ +
+        "' sheet, or pass {confirm:true, allowZero:true} if they really are sold out.", "WOULD_ZERO");
+    }
+
+    // 3. BACK UP the whole history before deleting anything
+    var hist = ss.getSheetByName(CONFIG.TAB_ADJ);
+    if (!hist) throw mkError_("Missing '" + CONFIG.TAB_ADJ + "' sheet", "NOT_FOUND");
+    var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HHmmss");
+    var backupName = CONFIG.TAB_ADJ + " (backup " + stamp + ")";
+    hist.copyTo(ss).setName(backupName);
+
+    // 4. delete the zeroing rows: rewrite the body without the flagged rowNums
+    var del = {};
+    model.forEach(function (m) { m.bugRowNums.forEach(function (rn) { del[rn] = true; }); });
+    var deleted = 0, last = hist.getLastRow();
+    if (last >= 2) {
+      var raw = hist.getRange(2, 1, last - 1, 5).getValues();
+      var keep = [];
+      for (var k = 0; k < raw.length; k++) {
+        if (del[k + 2]) { deleted++; continue; }            // rowNum = sheet row = k + 2
+        keep.push(raw[k]);
+      }
+      clearSheetBody_(hist);
+      if (keep.length) hist.getRange(2, 1, keep.length, 5).setValues(keep);
+    }
+
+    // 5. set HQ = final for affected SKUs; recompute In Sales; collect consistency adjustments
+    var idx = getInventoryIndex_();
+    var n = idx.lastRow - 1, setCount = 0, adjustments = [], ts = new Date();
+    if (n >= 1) {
+      var block = idx.sheet.getRange(2, 1, n, idx.lastCol).getValues();
+      var hqVals = [], odVals = [];
+      for (var r = 0; r < n; r++) {
+        hqVals.push([Number(block[r][idx.cols.hq - 1]) || 0]);
+        odVals.push([idx.cols.onDisplay ? (Number(block[r][idx.cols.onDisplay - 1]) || 0) : 0]);
+      }
+      for (var r2 = 0; r2 < n; r2++) {
+        var sku2 = String(block[r2][idx.cols.sku - 1]).trim();
+        if (!sku2 || !affected[sku2]) continue;
+        var m = affected[sku2];
+        var fin = finalBySku[sku2] != null ? finalBySku[sku2] : m.suggested;
+        hqVals[r2][0] = fin;
+        setCount++;
+        var keptHqDelta = m.hqDelta - m.bugDelta;   // remove the deleted (bug) deltas from the replay
+        var adj = fin - keptHqDelta;                // make the cleaned log replay to fin
+        if (adj !== 0) adjustments.push([ts, sku2, adj, RECON_REASON_, "post-bug reconcile"]);
+      }
+      idx.sheet.getRange(2, idx.cols.hq, n, 1).setValues(hqVals);
+      writeInSales_(idx, hqVals, odVals);
+    }
+
+    // 6. append the consistency adjustments (kept-log -> inventory)
+    appendLedger_(adjustments);
+
+    var summary = { deletedBugRows: deleted, skusSet: setCount, adjustmentRows: adjustments.length, backupSheet: backupName };
+    Logger.log("=== reconcileApply DONE === " + JSON.stringify(summary));
+    return summary;
+  });
+}
+
+/**
+ * EDITOR CONVENIENCE: one-click apply. The "Run" button can't pass arguments, so
+ * this wraps reconcileApply({confirm:true}). Run reconcilePreview() and fill the
+ * Override column FIRST. Still protected by the same guards: it refuses if there's
+ * no Reconciliation sheet, and stops (WOULD_ZERO) if any NO_POSITIVE row was left
+ * blank — fill those Overrides, then run this again.
+ */
+function reconcileApplyNow() {
+  var res = reconcileApply({ confirm: true });
+  Logger.log("APPLIED: " + JSON.stringify(res));
   return res;
 }

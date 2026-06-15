@@ -1,0 +1,10 @@
+# Wrangler local state/cache (Cloudflare Pages deploys)
+.wrangler/
+**/.wrangler/
+
+# OS / editor cruft
+.DS_Store
+**/.DS_Store
+
+# Node
+node_modules/
