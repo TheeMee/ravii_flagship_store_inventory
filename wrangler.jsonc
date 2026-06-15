@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ravii-flagship-store-inventory",
+  "compatibility_date": "2026-06-15",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "deploy"
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ]
+}
