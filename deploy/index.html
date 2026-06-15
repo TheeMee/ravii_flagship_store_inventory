@@ -294,6 +294,10 @@
             <button class="view-btn active" data-view="available" onclick="setInvView('available')">In Sales</button>
             <button class="view-btn" data-view="onDisplay" onclick="setInvView('onDisplay')">On Display</button>
         </div>
+        <div class="view-toggle" id="brand-toggle" style="margin-top:8px">
+            <button class="view-btn active" data-brand="ravii" onclick="setInvBrand('ravii')">RAVii</button>
+            <button class="view-btn" data-brand="essentials" onclick="setInvBrand('essentials')">RAVii Essentials</button>
+        </div>
     </div>
 
     <div id="reader"></div>
@@ -413,6 +417,7 @@
         let productDB = {};   // barcode -> {name, sku, color, size}
         let itemsData = [];   // raw catalog rows
         let NAME_LABELS = {};   // col-C "Name" -> cleaned display label (derived from col-D "Listing Title Name")
+        let NAME_ORDER = null;  // col-C "Name" -> sheet position (newest first), built lazily; mirrors picker order
         let html5QrcodeScanner = null, isCameraRunning = false;
         let btBuffer = "", btTimeout = null;
         let pickerQty = 1, pickerSku = "", pendingScopeScan = null;
@@ -429,6 +434,7 @@
             buckets: { addDeduct: {}, stockCount: {}, markShow: {} },
             inventory: null,
             invView: 'available',
+            invBrand: 'ravii',
             showEmpty: false,
             pickerPurpose: 'add'
         };
@@ -1307,6 +1313,7 @@
             Object.keys(cleaned).forEach(c => { const d = cleaned[c]; if (d) count[d] = (count[d] || 0) + 1; });
             NAME_LABELS = {};
             Object.keys(cleaned).forEach(c => { const d = cleaned[c]; NAME_LABELS[c] = (d && count[d] === 1) ? d : c; });
+            NAME_ORDER = null; // rebuild on next access against the freshly loaded catalog
         }
         function nameLabel(c) { return NAME_LABELS[c] || c; }
 
@@ -1448,8 +1455,28 @@
         }
         function setInvView(v) {
             state.invView = v;
-            document.querySelectorAll('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+            document.querySelectorAll('.view-btn[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === v));
             renderInventory();
+        }
+        function setInvBrand(b) {
+            state.invBrand = b;
+            document.querySelectorAll('#brand-toggle .view-btn').forEach(x => x.classList.toggle('active', x.dataset.brand === b));
+            renderInventory();
+        }
+        // Newest-first order map (col-C "Name" -> position), matching the Manual Add picker's sheet order.
+        function nameOrderIndex() {
+            if (!NAME_ORDER) {
+                NAME_ORDER = {}; let i = 0;
+                itemsData.forEach(it => { const n = getVal(it, 'Name'); if (n && !(n in NAME_ORDER)) NAME_ORDER[n] = i++; });
+            }
+            return NAME_ORDER;
+        }
+        // Bucket an Inventory brand value into a subtab group. Essentials checked first (it also contains "ravii").
+        function brandGroup(b) {
+            const s = String(b || '').toLowerCase();
+            if (s.includes('essential')) return 'essentials';
+            if (s.includes('ravii')) return 'ravii';
+            return 'other';
         }
         function viewValue(it) {
             if (state.invView === 'inStore') return it.inStore;
@@ -1465,31 +1492,34 @@
             const items = state.inventory.items.filter(it => !q || it.n.toLowerCase().includes(q) || nameLabel(it.n).toLowerCase().includes(q) || it.s.toLowerCase().includes(q));
             const images = state.inventory.images || {};
 
-            // group brand -> name -> items
-            const brands = {};
+            // Bucket products by subtab group (ravii / essentials / other), then by name within each.
+            const groups = { ravii: {}, essentials: {}, other: {} };
             items.forEach(it => {
-                const b = it.b || 'Other';
-                if (!brands[b]) brands[b] = {};
-                if (!brands[b][it.n]) brands[b][it.n] = [];
-                brands[b][it.n].push(it);
+                const g = groups[brandGroup(it.b)];
+                if (!g[it.n]) g[it.n] = [];
+                g[it.n].push(it);
             });
-            const brandNames = Object.keys(brands).sort();
-            if (!brandNames.length) { content.innerHTML = `<div class="empty-state"><div class="big">🔍</div><div class="t">No products</div></div>`; return; }
+            const order = nameOrderIndex();
+            const orderIdx = n => (n in order) ? order[n] : Infinity; // unknown names sink to the bottom
 
-            // In-stock products (any In Store) shown up top; out-of-stock tucked into an expandable section.
-            let mainHtml = '';
+            // Render one brand bucket: in-stock cards (newest first) returned, out-of-stock pushed to emptyCards.
             const emptyCards = [];
-            brandNames.forEach(brand => {
-                let brandHtml = '';
-                Object.keys(brands[brand]).sort().forEach(name => {
-                    const prodItems = brands[brand][name];
+            function renderBucket(bucket) {
+                let h = '';
+                Object.keys(bucket).sort((a, b) => orderIdx(a) - orderIdx(b)).forEach(name => {
+                    const prodItems = bucket[name];
                     const inStock = prodItems.reduce((s, i) => s + i.inStore, 0) > 0;
                     const card = renderProductCard(name, prodItems, images);
-                    if (inStock) brandHtml += card;
+                    if (inStock) h += card;
                     else emptyCards.push(card);
                 });
-                if (brandHtml) mainHtml += `<div class="brand-label">${esc(brand)}</div>` + brandHtml;
-            });
+                return h;
+            }
+
+            // Active subtab's products up top (no label — the tab names them); "Other" brands at the bottom of both tabs.
+            let mainHtml = renderBucket(groups[state.invBrand] || {});
+            const otherHtml = renderBucket(groups.other);
+            if (otherHtml) mainHtml += `<div class="brand-label">Other</div>` + otherHtml;
 
             let html = mainHtml || `<div class="empty-state"><div class="big">📦</div><div class="t">Nothing in stock${q ? ' matches that' : ''}</div></div>`;
             if (emptyCards.length) {
